@@ -7,9 +7,10 @@ workflows:
         APP_NAME: "beluga_chat_sapp"
         BUNDLE_ID: "com.beluga.chatt"
     scripts:
-      - name: Cài Python & pip
+      - name: Cài Python, pip & automake
         script: |
           brew install python
+          brew install automake
           pip3 install --upgrade pip
           pip3 install virtualenv
       - name: Cài kivy-ios
@@ -20,13 +21,18 @@ workflows:
           cd $CM_BUILD_DIR
           mkdir iosbuild
           cd iosbuild
-          toolchain create $APP_NAME ../kivy_chat_app/main.py $BUNDLE_ID
-          toolchain build python3 kivy pycryptodome requests pillow
+          # Lệnh create - QUAN TRỌNG: loại bỏ $BUNDLE_ID ở cuối
+          toolchain create $APP_NAME ../kivy_chat_app/main.py
+          # Loại bỏ pycryptodome khỏi danh sách build
+          toolchain build python3 kivy requests pillow
           toolchain build $APP_NAME
-      - name: Tạo Xcode project
+      - name: Tạo Xcode project và sửa Bundle ID
         script: |
           cd $CM_BUILD_DIR/iosbuild
           toolchain xcode $APP_NAME
+          # Sửa bundle ID trong Info.plist
+          cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_NAME/Info.plist"
       - name: Build IPA unsigned
         script: |
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
