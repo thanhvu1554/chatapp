@@ -92,28 +92,26 @@ workflows:
             cd $KIVY_IOS_ROOT
             echo "Patching Python3 recipe..."
             
-            # Tạo file patch cho Python3 - Cách an toàn
-            echo '
-import os
-import fileinput
+            # Tạo file patch_python.py bằng lệnh echo
+            echo 'import os' > patch_python.py
+            echo 'import fileinput' >> patch_python.py
+            echo '' >> patch_python.py
+            echo 'recipe_file = "recipes/python3/__init__.py"' >> patch_python.py
+            echo 'if os.path.exists(recipe_file):' >> patch_python.py
+            echo '    print("Patching Python3 recipe...")' >> patch_python.py
+            echo '    with fileinput.FileInput(recipe_file, inplace=True) as file:' >> patch_python.py
+            echo '        for line in file:' >> patch_python.py
+            echo '            # Sửa các lỗi tương thích' >> patch_python.py
+            echo '            if "def get_recipe_env" in line:' >> patch_python.py
+            echo '                print(line, end="")' >> patch_python.py
+            echo '                print("        env[\\\"_PYTHON_HOST_PLATFORM\\\"] = \\\"darwin\\\"")' >> patch_python.py
+            echo '                print("        env[\\\"PYTHONPATH\\\"] = os.getcwd()")' >> patch_python.py
+            echo '            else:' >> patch_python.py
+            echo '                print(line, end="")' >> patch_python.py
+            echo '    print("Done patching Python3 recipe")' >> patch_python.py
+            echo 'else:' >> patch_python.py
+            echo '    print("Python3 recipe file not found")' >> patch_python.py
 
-recipe_file = "recipes/python3/__init__.py"
-if os.path.exists(recipe_file):
-    print("Patching Python3 recipe...")
-    with fileinput.FileInput(recipe_file, inplace=True) as file:
-        for line in file:
-            # Sửa các lỗi tương thích
-            if "def get_recipe_env" in line:
-                print(line, end="")
-                print("        env[\"_PYTHON_HOST_PLATFORM\"] = \"darwin\"")
-                print("        env[\"PYTHONPATH\"] = os.getcwd()")
-            else:
-                print(line, end="")
-    print("Done patching Python3 recipe")
-else:
-    print("Python3 recipe file not found")
-' > patch_python.py
-            
             python3 patch_python.py
             
             # Build python3 sau khi patch
