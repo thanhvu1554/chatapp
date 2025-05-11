@@ -53,62 +53,73 @@ workflows:
               print("libffi recipe file not found")
           EOF
           python3 patch_libffi.py
+          
+          # Xóa cache cũ nếu có để clean build
+          rm -rf ~/.kivy-ios/build/* || true
+          rm -rf ~/.kivy-ios/dist/* || true
 
       - name: Chuẩn bị thư mục build
         script: |
           mkdir -p $CM_BUILD_DIR/iosbuild
           cd $CM_BUILD_DIR/iosbuild
 
-      - name: Build dependencies riêng cho libffi
-        script: |
-          cd $CM_BUILD_DIR/iosbuild
-          echo "📦 Building libffi với cấu hình đặc biệt..."
-          export MAKEFLAGS="-j2"
-          
-          # Triển khai 2 giải pháp có thể sửa lỗi libffi
-          
-          # Giải pháp 1: Dùng phiên bản cụ thể và tham số đặc biệt
-          toolchain build libffi || {
-            echo "⚠️ Thử lại với tham số cụ thể..."
-            # Xóa bản cài đặt cũ nếu có
-            rm -rf ~/.kivy-ios/build/libffi
-            rm -rf ~/.kivy-ios/dist/libffi
-            
-            # Thử với tham số cache_env=False
-            toolchain build libffi --cache-env=False || {
-              echo "⚠️ Vẫn thất bại, thử phương án cuối..."
-              # Sửa lỗi libffi theo cách thủ công
-              KIVY_IOS_ROOT=$(pip3 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
-              cd $KIVY_IOS_ROOT
-              echo "Kivy-iOS root: $KIVY_IOS_ROOT"
-              python3 toolchain.py build libffi --cache-env=False || {
-                echo "❌ Không thể build libffi, bỏ qua và thử build các dependencies khác..."
-              }
-            }
-          }
-
-      - name: Build các dependencies còn lại
+      - name: Build iOS dependencies
         script: |
           cd $CM_BUILD_DIR/iosbuild
           export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
           
-          # Thử build từng gói riêng lẻ
-          for lib in openssl python3 kivy; do
-            echo "📦 Building $lib..."
-            toolchain build $lib || { 
-              echo "⚠️ Thất bại lần đầu với $lib, thử lại với cache_env=False..."
-              toolchain build $lib --cache-env=False || {
-                echo "❌ Build $lib không thành công, bỏ qua..."
-              }
+          # Build các dependencies chính xác theo thứ tự
+          echo "📦 Building libffi..."
+          toolchain build libffi || {
+            echo "⚠️ Thử lại libffi sau khi xóa cache..."
+            rm -rf ~/.kivy-ios/build/libffi
+            rm -rf ~/.kivy-ios/dist/libffi
+            toolchain build libffi || echo "⚠️ Thất bại với libffi, tiếp tục xử lý..."
+          }
+          
+          echo "📦 Building openssl..."
+          toolchain build openssl || {
+            echo "⚠️ Thử lại openssl sau khi xóa cache..."
+            rm -rf ~/.kivy-ios/build/openssl
+            rm -rf ~/.kivy-ios/dist/openssl
+            toolchain build openssl || echo "⚠️ Thất bại với openssl, tiếp tục xử lý..."
+          }
+          
+          echo "📦 Building python3..."
+          toolchain build python3 || {
+            echo "⚠️ Thử lại python3 sau khi xóa cache..."
+            rm -rf ~/.kivy-ios/build/python3
+            rm -rf ~/.kivy-ios/dist/python3
+            toolchain build python3 || {
+              echo "❌ Lỗi Python3 - Đây là thành phần quan trọng"
+              exit 1
             }
-          done
+          }
+          
+          echo "📦 Building kivy..."
+          toolchain build kivy || {
+            echo "⚠️ Thử lại kivy sau khi xóa cache..."
+            rm -rf ~/.kivy-ios/build/kivy
+            rm -rf ~/.kivy-ios/dist/kivy
+            toolchain build kivy || {
+              echo "❌ Lỗi Kivy - Đây là thành phần quan trọng"
+              exit 1
+            }
+          }
           
           # Kiểm tra xem đã build đủ dependencies chưa
-          if [ ! -d ~/.kivy-ios/dist/python3 ] || [ ! -d ~/.kivy-ios/dist/kivy ]; then
-            echo "❌ Thiếu dependencies quan trọng, không thể tiếp tục"
+          if [ ! -d ~/.kivy-ios/dist/python3 ]; then
+            echo "❌ Thiếu Python3, không thể tiếp tục"
             exit 1
           fi
+          
+          if [ ! -d ~/.kivy-ios/dist/kivy ]; then
+            echo "❌ Thiếu Kivy, không thể tiếp tục"
+            exit 1
+          fi
+          
+          echo "✅ Đã build xong dependencies chính"
 
       - name: Tạo project từ source
         script: |
@@ -130,8 +141,8 @@ workflows:
           # Build app
           echo "⏳ Building app..."
           toolchain build $APP_NAME || {
-            echo "⚠️ Thất bại với build app, thử lại..."
-            toolchain build $APP_NAME --no-clean
+            echo "⚠️ Thất bại với build app, thử lại không clean..."
+            toolchain build $APP_NAME
           }
 
       - name: Chuẩn bị Xcode project
