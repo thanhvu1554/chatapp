@@ -45,19 +45,36 @@ workflows:
           echo "Tìm file main.py:"
           find $CM_BUILD_DIR -name "main.py" | sort
           
-          # Xác nhận main.py trong kivy_chat_app
-          if [ -f "$CM_BUILD_DIR/kivy_chat_app/main.py" ]; then
-            echo "✅ Tìm thấy file main.py trong kivy_chat_app"
+          # Sử dụng main.py từ thư mục gốc vì kivy_chat_app không tồn tại
+          export MAIN_PY="$CM_BUILD_DIR/main.py"
+          if [ -f "$MAIN_PY" ]; then
+            echo "✅ Tìm thấy file main.py ở thư mục gốc"
           else
-            echo "❌ Không tìm thấy main.py trong kivy_chat_app"
-            exit 1
+            echo "❌ Không tìm thấy main.py ở thư mục gốc"
+            # Tìm main.py ở bất kỳ vị trí nào
+            MAIN_PY=$(find $CM_BUILD_DIR -name "main.py" | grep -v "kivy-ios/tests" | head -n 1)
+            if [ -n "$MAIN_PY" ]; then
+              echo "✅ Đã tìm thấy main.py ở: $MAIN_PY"
+            else
+              echo "❌ Không tìm thấy main.py trong thư mục dự án"
+              exit 1
+            fi
           fi
+          echo "Sẽ sử dụng main.py từ: $MAIN_PY"
 
       - name: Build từng bước
         script: |
           mkdir -p $CM_BUILD_DIR/iosbuild
           cd $CM_BUILD_DIR/kivy-ios
-          export MAIN_PY="$CM_BUILD_DIR/kivy_chat_app/main.py"
+          
+          # Bây giờ main.py ở thư mục gốc
+          export MAIN_PY="$CM_BUILD_DIR/main.py"
+          # Nếu không tìm thấy, thử tìm ở bất kỳ vị trí nào
+          if [ ! -f "$MAIN_PY" ]; then
+            MAIN_PY=$(find $CM_BUILD_DIR -name "main.py" | grep -v "kivy-ios/tests" | head -n 1)
+          fi
+          
+          echo "Sử dụng main.py từ: $MAIN_PY"
           
           echo "====== Building python3 ======"
           python3 toolchain.py build python3 || true
@@ -106,4 +123,4 @@ workflows:
     artifacts:
       - kivy-ios/*-ios/build/IPA/*.ipa
       - kivy-ios/dist
-      - iosbuild
+      - iosbuild 
