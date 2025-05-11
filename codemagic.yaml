@@ -6,84 +6,85 @@ workflows:
       vars:
         APP_NAME: "beluga_chat_sapp"
         BUNDLE_ID: "com.beluga.chatt"
+
     scripts:
-      - name: Cài Python & công cụ build
+      - name: Cài automake và công cụ build cần thiết
         script: |
-          brew install python automake libtool pkg-config
+          brew update
+          brew install automake libtool pkg-config
+          echo "✅ Kiểm tra automake:"
+          automake --version || { echo "❌ Automake không cài được!"; exit 1; }
+
+      - name: Cài Python và pip
+        script: |
+          brew install python
           pip3 install --upgrade pip
           pip3 install virtualenv
-          
+
       - name: Cài kivy-ios
         script: |
           pip3 install kivy-ios
-          
+
       - name: Build dependencies
         script: |
           cd $CM_BUILD_DIR
           mkdir -p iosbuild
           cd iosbuild
-          
-          # Build các thư viện chính
-          toolchain build python3
-          toolchain build kivy
-          
-          # Bỏ pillow, requests & pycryptodome vì không có recipe
-          
+
+          echo "🛠️ Bắt đầu build python3"
+          toolchain build python3 || { echo "❌ Build python3 failed"; exit 1; }
+
+          echo "🛠️ Bắt đầu build kivy"
+          toolchain build kivy || { echo "❌ Build kivy failed"; exit 1; }
+
       - name: Tạo project từ main.py
         script: |
           cd $CM_BUILD_DIR/iosbuild
-          
-          # Kiểm tra file main.py và kivy_chat_app folder
-          echo "Checking workspace contents:"
+
+          echo "📁 Kiểm tra workspace:"
           ls -la ../
-          
-          # Đường dẫn chính xác đến main.py (kiểm tra cả hai vị trí phổ biến)
+
           if [ -f "../kivy_chat_app/main.py" ]; then
-            echo "Found main.py in kivy_chat_app folder"
+            echo "✅ Found main.py trong kivy_chat_app"
             toolchain create $APP_NAME ../kivy_chat_app/main.py
           elif [ -f "../main.py" ]; then
-            echo "Found main.py in root folder"
+            echo "✅ Found main.py trong thư mục gốc"
             toolchain create $APP_NAME ../main.py
           else
-            echo "ERROR: main.py not found!"
+            echo "❌ Không tìm thấy main.py"
             exit 1
           fi
-          
-          # Build app
-          toolchain build $APP_NAME
-          
+
       - name: Tạo Xcode project & sửa Bundle ID
         script: |
           cd $CM_BUILD_DIR/iosbuild
           toolchain xcode $APP_NAME
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
-          
-          # Kiểm tra các file trong thư mục app
-          echo "Checking app folder structure:"
+
+          echo "📁 Kiểm tra cấu trúc thư mục:"
           ls -la
-          echo "Checking inside app folder:"
+          echo "📁 Bên trong thư mục app:"
           ls -la $APP_NAME/
-          
-          # Sửa CFBundleIdentifier - kiểm tra cả hai tên file Info.plist phổ biến
+
           if [ -f "$APP_NAME/Info.plist" ]; then
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_NAME/Info.plist"
-            echo "Updated bundle ID in Info.plist"
+            echo "✅ Bundle ID đã được sửa"
           elif [ -f "$APP_NAME/$APP_NAME-Info.plist" ]; then
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_NAME/$APP_NAME-Info.plist"
-            echo "Updated bundle ID in $APP_NAME-Info.plist"
+            echo "✅ Bundle ID đã được sửa (file -Info.plist)"
           else
-            echo "WARNING: Info.plist not found at expected locations"
+            echo "⚠️ Không tìm thấy Info.plist"
             find . -name "Info.plist" -o -name "*-Info.plist"
           fi
-          
+
       - name: Build IPA unsigned
         script: |
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
-          
-          # Build archive
+
+          echo "📦 Bắt đầu build archive"
           xcodebuild -scheme $APP_NAME -configuration Release -archivePath $APP_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          
-          # Create exportOptions.plist file separately (more reliable than inline)
+
+          echo "📦 Tạo exportOptions.plist"
           cat > exportOptions.plist << EOL
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -96,12 +97,12 @@ workflows:
           </dict>
           </plist>
           EOL
-          
-          # Export IPA
+
+          echo "📦 Export IPA"
           xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive -exportOptionsPlist exportOptions.plist -exportPath build/Release-iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          
-          # Check if IPA was created
+
+          echo "📦 Kiểm tra IPA:"
           find build -name "*.ipa"
-          
+
     artifacts:
       - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa
