@@ -21,62 +21,125 @@ workflows:
           echo "✅ Python path: $(which python3.9)"
           echo "✅ pip path: $(which pip3.9)"
           echo "✅ Current PATH: $PATH"
+          echo "✅ /usr/bin/which cython-2.7: $(/usr/bin/which cython-2.7 || echo 'not found')"
 
           brew link --overwrite automake autoconf libtool gettext
           brew install openssl@1.1 sdl2 sdl2_image sdl2_ttf sdl2_mixer
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libssl.1.1.dylib /usr/local/lib/ || true
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libcrypto.1.1.dylib /usr/local/lib/ || true
 
-      - name: Cài kivy-ios và Cython, và kiểm tra Cython
+      - name: Cài kivy-ios, Cython, và patch toolchain.py
         script: |
           export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
 
           python3.9 -m pip install --upgrade pip
-          # Cài Cython trước và kiểm tra kỹ
           pip3.9 install Cython
-          echo "✅ Cython version: $(cython --version || cython3 --version)"
-          echo "✅ Cython path: $(which cython || which cython3)"
+          echo "✅ Cython version (Python 3.9): $(cython --version || cython3 --version)"
+          CYTHON_PATH_PY39=$(which cython || which cython3)
+          echo "✅ Cython path (Python 3.9): $CYTHON_PATH_PY39"
           
-          # Thử tạo symlink nếu 'cython' không được tìm thấy trực tiếp
-          if ! command -v cython &> /dev/null; then
-              if command -v cython3 &> /dev/null; then
-                  echo "Creating symlink for cython from cython3..."
-                  sudo ln -sf $(which cython3) /usr/local/bin/cython
-              else
-                  echo "❌ Cython (cython or cython3) not found after installation!"
-                  exit 1
-              fi
+          if [ -z "$CYTHON_PATH_PY39" ]; then
+              echo "❌ Cython (cython or cython3) for Python 3.9 not found after installation!"
+              exit 1
           fi
-          # Đảm bảo /usr/local/bin có trong PATH (thường là mặc định)
+
+          # Tạo symlink 'cython' nếu nó chưa trỏ đúng
+          if [ ! -x "/usr/local/bin/cython" ] || [ "$(readlink /usr/local/bin/cython)" != "$CYTHON_PATH_PY39" ]; then
+              echo "Creating/Updating symlink for /usr/local/bin/cython to point to $CYTHON_PATH_PY39..."
+              sudo ln -sf "$CYTHON_PATH_PY39" /usr/local/bin/cython
+          fi
+          
           export PATH="/usr/local/bin:$PATH"
-          echo "✅ Final Cython path check: $(which cython)"
-          export CYTHON=$(which cython) # Đặt biến môi trường CYTHON
+          echo "✅ Final Cython path check (used by shell): $(which cython)"
+          export CYTHON=$(which cython)
           echo "✅ CYTHON env var set to: $CYTHON"
 
           pip3.9 install wheel virtualenv
           pip3.9 install kivy-ios==$KIVY_IOS_VERSION
-          
           echo "Using kivy-ios version: $KIVY_IOS_VERSION installed for Python 3.9"
           
+          # Script Python để patch toolchain.py
+          KIVY_IOS_TOOLCHAIN_FILE=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
+          echo "Attempting to patch $KIVY_IOS_TOOLCHAIN_FILE for Cython variants..."
+
+          cat > patch_toolchain_script.py << EOF
+import os
+import sys
+import fileinput
+
+toolchain_file_path = sys.argv[1]
+# Dòng gốc cần tìm (có thể có các khoảng trắng khác nhau)
+# Tuples of variants seen in different kivy-ios versions/contexts
+possible_original_lines = [
+    'cython_variants = ("cython-2.7", "cython", "cython3")',
+    'cython_variants = ("cython", "cython-2.7", "cython3")',
+    'cython_variants = ("cython3", "cython-2.7", "cython")',
+    'cython_variants = ("cython-2.7", "cython3", "cython")'
+]
+replacement_line = 'cython_variants = ("cython", "cython3") # Patched by Codemagic assistant to prioritize local cython\n'
+
+if not os.path.isfile(toolchain_file_path):
+    print(f"Error: {toolchain_file_path} not found or is not a file.")
+    sys.exit(1)
+
+patched_successfully = False
+lines_written = 0
+
+try:
+    # Tạo file backup
+    backup_path = toolchain_file_path + ".bak-cython-patch"
+    if os.path.exists(backup_path):
+        os.remove(backup_path)
+    os.rename(toolchain_file_path, backup_path)
+    print(f"Created backup: {backup_path}")
+
+    with open(backup_path, 'r') as infile, open(toolchain_file_path, 'w') as outfile:
+        for line_number, line in enumerate(infile, 1):
+            stripped_line = line.strip()
+            was_patched_this_line = False
+            for original_variant_line_template in possible_original_lines:
+                # So sánh sau khi loại bỏ khoảng trắng không cần thiết giữa các phần tử tuple
+                normalized_original = original_variant_line_template.replace(", ", ",")
+                normalized_stripped_line = stripped_line.replace(", ", ",")
+                if normalized_original in normalized_stripped_line and stripped_line.startswith("cython_variants"):
+                    outfile.write(replacement_line)
+                    print(f"  Line {line_number} Replaced: {stripped_line}")
+                    print(f"  With:           {replacement_line.strip()}")
+                    patched_successfully = True
+                    was_patched_this_line = True
+                    break 
+            if not was_patched_this_line:
+                outfile.write(line)
+            lines_written +=1
+    
+    print(f"Total lines written to new file: {lines_written}")
+    if patched_successfully:
+        print(f"Successfully patched {toolchain_file_path}.")
+    else:
+        print(f"Warning: Target line for Cython variants not found in {toolchain_file_path}. Restoring from backup.")
+        os.remove(toolchain_file_path) # remove the unpatched (new) file
+        os.rename(backup_path, toolchain_file_path) # restore backup
+        sys.exit(1) # Thoát nếu không patch được
+
+except Exception as e:
+    print(f"Error during patching of {toolchain_file_path}: {e}")
+    # Cố gắng khôi phục backup nếu có lỗi
+    if os.path.exists(backup_path) and not os.path.exists(toolchain_file_path):
+        os.rename(backup_path, toolchain_file_path)
+        print(f"Restored {toolchain_file_path} from backup due to error.")
+    sys.exit(1)
+EOF
+
+          python3.9 patch_toolchain_script.py "$KIVY_IOS_TOOLCHAIN_FILE"
+          echo "Finished patching toolchain.py attempts."
+          # Kiểm tra nội dung đã patch (tùy chọn, có thể tạo nhiều output)
+          # echo "--- Patched toolchain.py (Cython variants section) ---"
+          # grep "cython_variants" "$KIVY_IOS_TOOLCHAIN_FILE"
+          # echo "----------------------------------------------------"
+
           rm -rf ~/.kivy-ios/build/* || true
           rm -rf ~/.kivy-ios/dist/* || true
-          
-          # Patch toolchain.py để tìm cython đúng cách hơn
-          KIVY_IOS_TOOLCHAIN_FILE=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
-          if [ -f "$KIVY_IOS_TOOLCHAIN_FILE" ]; then
-            echo "Patching $KIVY_IOS_TOOLCHAIN_FILE to prefer 'cython' or 'cython3'..."
-            # Thay thế việc tìm kiếm cython-2.7 hoặc các tên cụ thể bằng một trình tự ưu tiên hơn
-            sed -i.bak \
-              "s/cython_fn = self.cython_fn ChoiceContainer(\(cython_variants\))/cython_fn = self.cython_fn ChoiceContainer(('cython', 'cython3'))/g" \
-              "$KIVY_IOS_TOOLCHAIN_FILE"
-            sed -i.bak \
-              "s/self.cython = cython/self.cython = sh.which('cython') or sh.which('cython3') or cython/g" \
-              "$KIVY_IOS_TOOLCHAIN_FILE"
-            echo "Patched toolchain.py for Cython detection."
-          else
-            echo "⚠️ Could not find $KIVY_IOS_TOOLCHAIN_FILE to patch."
-          fi
 
       - name: Chuẩn bị thư mục build
         script: |
@@ -87,8 +150,9 @@ workflows:
         script: |
           export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
-          export PATH="/usr/local/bin:$PATH" # Đảm bảo symlink cython được dùng
-          export CYTHON=$(which cython) # Đảm bảo biến môi trường được kế thừa
+          export PATH="/usr/local/bin:$PATH"
+          export CYTHON=$(which cython)
+          echo "Starting 'Build iOS dependencies' step with CYTHON=$CYTHON"
           cd $CM_BUILD_DIR/iosbuild
           
           export MAKEFLAGS="-j2"
@@ -101,7 +165,6 @@ workflows:
           export LDFLAGS="-L/usr/local/lib -L/usr/local/opt/openssl@1.1/lib"
           
           echo "🔧 SDKROOT: $SDKROOT"
-          echo "🔧 CYTHON for this step: $CYTHON"
           
           for recipe in libffi openssl; do
             echo "📦 Building $recipe..."
@@ -118,35 +181,32 @@ workflows:
           export CC=$(xcrun -find -sdk iphoneos clang)
           
           python3.9 -m kivy_ios.toolchain build python3 || {
-            echo "⚠️ Thử lại python3 với patch..."
+            echo "⚠️ Thử lại python3 với patch đã thực hiện trước đó..."
             rm -rf ~/.kivy-ios/build/python3 ~/.kivy-ios/dist/python3
-            
+            # Script patch Python recipe (khác với patch toolchain cho Cython variants)
             KIVY_IOS_ROOT_DIR=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
-            cd $KIVY_IOS_ROOT_DIR
-            echo "Patching Python3 recipe in $KIVY_IOS_ROOT_DIR..."
-            
-            echo 'import os' > patch_python.py
-            echo 'import fileinput' >> patch_python.py
-            echo '' >> patch_python.py
-            echo 'recipe_file = "recipes/python3/__init__.py"' >> patch_python.py
-            echo 'if os.path.exists(recipe_file):' >> patch_python.py
-            echo '    print(f"Found recipe file: {os.path.abspath(recipe_file)}")' >> patch_python.py
-            echo '    print("Patching Python3 recipe...")' >> patch_python.py
-            echo '    with fileinput.FileInput(recipe_file, inplace=True) as file:' >> patch_python.py
-            echo '        for line in file:' >> patch_python.py
-            echo '            if "def get_recipe_env" in line:' >> patch_python.py
-            echo '                print(line, end="")' >> patch_python.py
-            echo '                print("        env[\\\"_PYTHON_HOST_PLATFORM\\\"] = \\\"darwin\\\"")' >> patch_python.py
-            echo '                print("        env[\\\"PYTHONPATH\\\"] = os.getcwd()")' >> patch_python.py
-            echo '            else:' >> patch_python.py
-            echo '                print(line, end="")' >> patch_python.py
-            echo '    print("Done patching Python3 recipe")' >> patch_python.py
-            echo 'else:' >> patch_python.py
-            echo '    print(f"Python3 recipe file not found at {os.path.abspath(recipe_file)}")' >> patch_python.py
-
-            python3.9 patch_python.py
-            
-            cd $CM_BUILD_DIR/iosbuild
+            cd $KIVY_IOS_ROOT_DIR # Tạm thời chuyển dir để patch recipe python3
+            echo "Patching Python3 recipe in $KIVY_IOS_ROOT_DIR for cross-compilation..."
+            echo 'import os' > patch_python_recipe.py
+            echo 'import fileinput' >> patch_python_recipe.py
+            echo '' >> patch_python_recipe.py
+            echo 'recipe_file = "recipes/python3/__init__.py"' >> patch_python_recipe.py
+            echo 'if os.path.exists(recipe_file):' >> patch_python_recipe.py
+            echo '    print(f"Found Python3 recipe file: {os.path.abspath(recipe_file)}")' >> patch_python_recipe.py
+            echo '    print("Patching Python3 recipe...")' >> patch_python_recipe.py
+            echo '    with fileinput.FileInput(recipe_file, inplace=True) as file:' >> patch_python_recipe.py
+            echo '        for line in file:' >> patch_python_recipe.py
+            echo '            if "def get_recipe_env" in line:' >> patch_python_recipe.py
+            echo '                print(line, end="")' >> patch_python_recipe.py
+            echo '                print("        env[\\\"_PYTHON_HOST_PLATFORM\\\"] = \\\"darwin\\\"")' >> patch_python_recipe.py
+            echo '                print("        env[\\\"PYTHONPATH\\\"] = os.getcwd()")' >> patch_python_recipe.py
+            echo '            else:' >> patch_python_recipe.py
+            echo '                print(line, end="")' >> patch_python_recipe.py
+            echo '    print("Done patching Python3 recipe")' >> patch_python_recipe.py
+            echo 'else:' >> patch_python_recipe.py
+            echo '    print(f"Python3 recipe file not found at {os.path.abspath(recipe_file)}")' >> patch_python_recipe.py
+            python3.9 patch_python_recipe.py
+            cd $CM_BUILD_DIR/iosbuild # Quay lại thư mục build
             python3.9 -m kivy_ios.toolchain build python3 || {
               echo "❌ Lỗi Python3 nghiêm trọng."
               exit 1
