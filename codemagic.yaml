@@ -92,27 +92,28 @@ workflows:
             cd $KIVY_IOS_ROOT
             echo "Patching Python3 recipe..."
             
-            # Tạo file patch cho Python3
-            cat > patch_python.py << 'EOF'
+            # Tạo file patch cho Python3 - Cách an toàn
+            echo '
 import os
 import fileinput
 
-recipe_file = 'recipes/python3/__init__.py'
+recipe_file = "recipes/python3/__init__.py"
 if os.path.exists(recipe_file):
     print("Patching Python3 recipe...")
     with fileinput.FileInput(recipe_file, inplace=True) as file:
         for line in file:
             # Sửa các lỗi tương thích
-            if 'def get_recipe_env' in line:
-                print(line, end='')
-                print('        env["_PYTHON_HOST_PLATFORM"] = "darwin"')
-                print('        env["PYTHONPATH"] = os.getcwd()')
+            if "def get_recipe_env" in line:
+                print(line, end="")
+                print("        env[\"_PYTHON_HOST_PLATFORM\"] = \"darwin\"")
+                print("        env[\"PYTHONPATH\"] = os.getcwd()")
             else:
-                print(line, end='')
+                print(line, end="")
     print("Done patching Python3 recipe")
 else:
     print("Python3 recipe file not found")
-EOF
+' > patch_python.py
+            
             python3 patch_python.py
             
             # Build python3 sau khi patch
