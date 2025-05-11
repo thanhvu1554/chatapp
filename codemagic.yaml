@@ -63,73 +63,72 @@ workflows:
           KIVY_IOS_TOOLCHAIN_FILE=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
           echo "Attempting to patch $KIVY_IOS_TOOLCHAIN_FILE for Cython variants..."
 
-          cat > patch_toolchain_script.py << EOF
-import os
-import sys
-import fileinput
-
-toolchain_file_path = sys.argv[1]
-# Dòng gốc cần tìm (có thể có các khoảng trắng khác nhau)
-# Tuples of variants seen in different kivy-ios versions/contexts
-possible_original_lines = [
-    'cython_variants = ("cython-2.7", "cython", "cython3")',
-    'cython_variants = ("cython", "cython-2.7", "cython3")',
-    'cython_variants = ("cython3", "cython-2.7", "cython")',
-    'cython_variants = ("cython-2.7", "cython3", "cython")'
-]
-replacement_line = 'cython_variants = ("cython", "cython3") # Patched by Codemagic assistant to prioritize local cython\n'
-
-if not os.path.isfile(toolchain_file_path):
-    print(f"Error: {toolchain_file_path} not found or is not a file.")
-    sys.exit(1)
-
-patched_successfully = False
-lines_written = 0
-
-try:
-    # Tạo file backup
-    backup_path = toolchain_file_path + ".bak-cython-patch"
-    if os.path.exists(backup_path):
-        os.remove(backup_path)
-    os.rename(toolchain_file_path, backup_path)
-    print(f"Created backup: {backup_path}")
-
-    with open(backup_path, 'r') as infile, open(toolchain_file_path, 'w') as outfile:
-        for line_number, line in enumerate(infile, 1):
-            stripped_line = line.strip()
-            was_patched_this_line = False
-            for original_variant_line_template in possible_original_lines:
-                # So sánh sau khi loại bỏ khoảng trắng không cần thiết giữa các phần tử tuple
-                normalized_original = original_variant_line_template.replace(", ", ",")
-                normalized_stripped_line = stripped_line.replace(", ", ",")
-                if normalized_original in normalized_stripped_line and stripped_line.startswith("cython_variants"):
-                    outfile.write(replacement_line)
-                    print(f"  Line {line_number} Replaced: {stripped_line}")
-                    print(f"  With:           {replacement_line.strip()}")
-                    patched_successfully = True
-                    was_patched_this_line = True
-                    break 
-            if not was_patched_this_line:
-                outfile.write(line)
-            lines_written +=1
-    
-    print(f"Total lines written to new file: {lines_written}")
-    if patched_successfully:
-        print(f"Successfully patched {toolchain_file_path}.")
-    else:
-        print(f"Warning: Target line for Cython variants not found in {toolchain_file_path}. Restoring from backup.")
-        os.remove(toolchain_file_path) # remove the unpatched (new) file
-        os.rename(backup_path, toolchain_file_path) # restore backup
-        sys.exit(1) # Thoát nếu không patch được
-
-except Exception as e:
-    print(f"Error during patching of {toolchain_file_path}: {e}")
-    # Cố gắng khôi phục backup nếu có lỗi
-    if os.path.exists(backup_path) and not os.path.exists(toolchain_file_path):
-        os.rename(backup_path, toolchain_file_path)
-        print(f"Restored {toolchain_file_path} from backup due to error.")
-    sys.exit(1)
-EOF
+          # Tạo script python thay vì sử dụng heredoc
+          echo "import os" > patch_toolchain_script.py
+          echo "import sys" >> patch_toolchain_script.py
+          echo "import fileinput" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "toolchain_file_path = sys.argv[1]" >> patch_toolchain_script.py
+          echo "# Dòng gốc cần tìm (có thể có các khoảng trắng khác nhau)" >> patch_toolchain_script.py
+          echo "# Tuples of variants seen in different kivy-ios versions/contexts" >> patch_toolchain_script.py
+          echo "possible_original_lines = [" >> patch_toolchain_script.py
+          echo "    'cython_variants = (\"cython-2.7\", \"cython\", \"cython3\")'," >> patch_toolchain_script.py
+          echo "    'cython_variants = (\"cython\", \"cython-2.7\", \"cython3\")'," >> patch_toolchain_script.py
+          echo "    'cython_variants = (\"cython3\", \"cython-2.7\", \"cython\")'," >> patch_toolchain_script.py
+          echo "    'cython_variants = (\"cython-2.7\", \"cython3\", \"cython\")'" >> patch_toolchain_script.py
+          echo "]" >> patch_toolchain_script.py
+          echo "replacement_line = 'cython_variants = (\"cython\", \"cython3\") # Patched by Codemagic assistant to prioritize local cython\\n'" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "if not os.path.isfile(toolchain_file_path):" >> patch_toolchain_script.py
+          echo "    print(f\"Error: {toolchain_file_path} not found or is not a file.\")" >> patch_toolchain_script.py
+          echo "    sys.exit(1)" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "patched_successfully = False" >> patch_toolchain_script.py
+          echo "lines_written = 0" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "try:" >> patch_toolchain_script.py
+          echo "    # Tạo file backup" >> patch_toolchain_script.py
+          echo "    backup_path = toolchain_file_path + \".bak-cython-patch\"" >> patch_toolchain_script.py
+          echo "    if os.path.exists(backup_path):" >> patch_toolchain_script.py
+          echo "        os.remove(backup_path)" >> patch_toolchain_script.py
+          echo "    os.rename(toolchain_file_path, backup_path)" >> patch_toolchain_script.py
+          echo "    print(f\"Created backup: {backup_path}\")" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "    with open(backup_path, 'r') as infile, open(toolchain_file_path, 'w') as outfile:" >> patch_toolchain_script.py
+          echo "        for line_number, line in enumerate(infile, 1):" >> patch_toolchain_script.py
+          echo "            stripped_line = line.strip()" >> patch_toolchain_script.py
+          echo "            was_patched_this_line = False" >> patch_toolchain_script.py
+          echo "            for original_variant_line_template in possible_original_lines:" >> patch_toolchain_script.py
+          echo "                # So sánh sau khi loại bỏ khoảng trắng không cần thiết giữa các phần tử tuple" >> patch_toolchain_script.py
+          echo "                normalized_original = original_variant_line_template.replace(\", \", \",\")" >> patch_toolchain_script.py
+          echo "                normalized_stripped_line = stripped_line.replace(\", \", \",\")" >> patch_toolchain_script.py
+          echo "                if normalized_original in normalized_stripped_line and stripped_line.startswith(\"cython_variants\"):" >> patch_toolchain_script.py
+          echo "                    outfile.write(replacement_line)" >> patch_toolchain_script.py
+          echo "                    print(f\"  Line {line_number} Replaced: {stripped_line}\")" >> patch_toolchain_script.py
+          echo "                    print(f\"  With:           {replacement_line.strip()}\")" >> patch_toolchain_script.py
+          echo "                    patched_successfully = True" >> patch_toolchain_script.py
+          echo "                    was_patched_this_line = True" >> patch_toolchain_script.py
+          echo "                    break " >> patch_toolchain_script.py
+          echo "            if not was_patched_this_line:" >> patch_toolchain_script.py
+          echo "                outfile.write(line)" >> patch_toolchain_script.py
+          echo "            lines_written +=1" >> patch_toolchain_script.py
+          echo "    " >> patch_toolchain_script.py
+          echo "    print(f\"Total lines written to new file: {lines_written}\")" >> patch_toolchain_script.py
+          echo "    if patched_successfully:" >> patch_toolchain_script.py
+          echo "        print(f\"Successfully patched {toolchain_file_path}.\")" >> patch_toolchain_script.py
+          echo "    else:" >> patch_toolchain_script.py
+          echo "        print(f\"Warning: Target line for Cython variants not found in {toolchain_file_path}. Restoring from backup.\")" >> patch_toolchain_script.py
+          echo "        os.remove(toolchain_file_path) # remove the unpatched (new) file" >> patch_toolchain_script.py
+          echo "        os.rename(backup_path, toolchain_file_path) # restore backup" >> patch_toolchain_script.py
+          echo "        sys.exit(1) # Thoát nếu không patch được" >> patch_toolchain_script.py
+          echo "" >> patch_toolchain_script.py
+          echo "except Exception as e:" >> patch_toolchain_script.py
+          echo "    print(f\"Error during patching of {toolchain_file_path}: {e}\")" >> patch_toolchain_script.py
+          echo "    # Cố gắng khôi phục backup nếu có lỗi" >> patch_toolchain_script.py
+          echo "    if os.path.exists(backup_path) and not os.path.exists(toolchain_file_path):" >> patch_toolchain_script.py
+          echo "        os.rename(backup_path, toolchain_file_path)" >> patch_toolchain_script.py
+          echo "        print(f\"Restored {toolchain_file_path} from backup due to error.\")" >> patch_toolchain_script.py
+          echo "    sys.exit(1)" >> patch_toolchain_script.py
 
           python3.9 patch_toolchain_script.py "$KIVY_IOS_TOOLCHAIN_FILE"
           echo "Finished patching toolchain.py attempts."
