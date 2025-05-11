@@ -17,86 +17,60 @@ jobs:
         with:
           python-version: '3.9'
 
+      - name: Clone kivy-ios directly
+        run: |
+          git clone https://github.com/kivy/kivy-ios.git
+          cd kivy-ios
+          python -m pip install -e .
+          ls -la
+          echo "Directly cloned kivy-ios repository"
+
       - name: Install dependencies
         run: |
           brew update
           brew install autoconf automake libtool pkg-config gettext ccache
           python -m pip install --upgrade pip
           python -m pip install Cython
-          python -m pip install kivy-ios==1.2.0
           
           # Tạo symlink cython-2.7
           CYTHON_PATH=$(which cython)
           sudo ln -sf "$CYTHON_PATH" /usr/local/bin/cython-2.7
-          
-          # Kiểm tra cấu trúc thư mục
-          python -c "import kivy_ios; print(f'kivy_ios path: {kivy_ios.__path__}')"
-          find $(python -c "import kivy_ios; print(kivy_ios.__path__[0])") -type d | sort
 
-      - name: Debug kivy-ios installation
+      - name: Check file structure
         run: |
-          # Kiểm tra chi tiết hơn về cài đặt kivy-ios
-          echo "Checking kivy-ios structure"
-          python -c "import sys; print(sys.path)"
-          python -c "import kivy_ios; print(dir(kivy_ios))"
+          cd kivy-ios
+          ls -la
+          find . -name "toolchain.py"
+          python toolchain.py --help || true
           
-          # Tìm tất cả file __init__.py
-          find $(python -c "import kivy_ios; print(kivy_ios.__path__[0])") -name "__init__.py" | sort
-          
-          # Tạo script Python khả thi hơn - tìm và sửa tất cả các file có chứa xcode10.patch
-          cat > find_patch_files.py << 'EOF'
-          import os
-          import sys
-          from pathlib import Path
-          import kivy_ios
-          
-          kivy_path = Path(kivy_ios.__path__[0])
-          print(f"Searching in {kivy_path}")
-          
-          patch_files = []
-          # Tìm tất cả các file có chứa 'xcode10.patch'
-          for root, dirs, files in os.walk(kivy_path):
-              for file in files:
-                  filepath = os.path.join(root, file)
-                  try:
-                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                          content = f.read()
-                          if 'xcode10.patch' in content:
-                              patch_files.append(filepath)
-                              print(f"Found xcode10.patch in {filepath}")
-                              
-                              # Sửa đổi file này để tránh áp dụng patch
-                              with open(filepath, 'w', encoding='utf-8') as fw:
-                                  new_content = content.replace('self.apply_patch("libffi-xcode10.patch")', '# patch disabled: self.apply_patch("libffi-xcode10.patch")')
-                                  fw.write(new_content)
-                                  print(f"  - Patched file to disable xcode10.patch")
-                  except Exception as e:
-                      pass
-          
-          if not patch_files:
-              print("No files containing xcode10.patch found")
-          EOF
-          
-          python find_patch_files.py
+          # Xem workflows hỗ trợ
+          echo "Available recipes:"
+          python toolchain.py recipes || true
 
-      - name: Build dependencies
+      - name: Build step-by-step
         run: |
+          mkdir -p ${{ github.workspace }}/iosbuild
+          cd ${{ github.workspace }}/iosbuild
+          
+          echo "====== Building python3 ======"
+          cd ${{ github.workspace }}/kivy-ios
+          python toolchain.py build python3 || true
+          
+          echo "====== Building kivy ======"
+          python toolchain.py build kivy || true
+          
+          echo "====== Creating app ======"
+          python toolchain.py create ${{ github.workspace }}/iosbuild/beluga_chat ../main.py || true
+          
+          echo "====== Looking for output files ======"
           cd ${{ github.workspace }}
-          mkdir -p iosbuild
-          cd iosbuild
-          
-          # Thử chỉ build kivy
-          echo "Building kivy..."
-          python -m kivy_ios.toolchain build kivy || true
-          
-          # Kiểm tra các file đã build
-          echo "Checking if build succeeded:"
-          find . -type d -o -name "*.a" | sort
+          find . -name "*.app" -o -name "*.ipa" || true
+          find kivy-ios -name "*.a" || true
 
-      - name: Upload info
+      - name: Upload all build products
         uses: actions/upload-artifact@v4
         with:
-          name: build-debug-info
+          name: kivy-ios-build-outputs
           path: |
-            ${{ github.workspace }}/iosbuild/
-            ${{ github.workspace }}/*.py
+            ${{ github.workspace }}/kivy-ios/dist
+            ${{ github.workspace }}/iosbuild
