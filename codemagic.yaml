@@ -12,7 +12,7 @@ workflows:
       - name: Cài toàn bộ công cụ build cần thiết
         script: |
           brew update
-          brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git
+          brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git pigz
           export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
           
@@ -159,6 +159,38 @@ workflows:
           export CYTHON=$(which cython)
           echo "Starting 'Build iOS dependencies' step with CYTHON=$CYTHON"
           cd $CM_BUILD_DIR/iosbuild
+          
+          # PATCH: Xử lý lỗi pigz trong toolchain.py
+          echo "Patching toolchain.py for pigz graceful fallback..."
+          KIVY_IOS_TOOLCHAIN_PATH=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
+          echo "import os" > patch_pigz_issue.py
+          echo "import sys" >> patch_pigz_issue.py
+          echo "import re" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "# File gốc chúng ta cần patch" >> patch_pigz_issue.py
+          echo "file_path = sys.argv[1]" >> patch_pigz_issue.py
+          echo "backup_path = file_path + '.bak-pigz'" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "# Tạo backup" >> patch_pigz_issue.py
+          echo "if os.path.exists(backup_path):" >> patch_pigz_issue.py
+          echo "    os.remove(backup_path)" >> patch_pigz_issue.py
+          echo "os.system(f'cp {file_path} {backup_path}')" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "with open(file_path, 'r') as f:" >> patch_pigz_issue.py
+          echo "    content = f.read()" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "# Tìm dòng: self.use_pigz = sh.which('pigz')" >> patch_pigz_issue.py
+          echo "pattern = r'(\s+)self\.use_pigz = sh\.which\([\'\"]pigz[\'\"]\)'" >> patch_pigz_issue.py
+          echo "replacement = r'\\1try:\\n\\1    self.use_pigz = sh.which(\"pigz\")\\n\\1except:\\n\\1    print(\"pigz not found, using standard compression\")\\n\\1    self.use_pigz = None'" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "new_content = re.sub(pattern, replacement, content)" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "with open(file_path, 'w') as f:" >> patch_pigz_issue.py
+          echo "    f.write(new_content)" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "print(f'Patched {file_path} for pigz error handling')" >> patch_pigz_issue.py
+          
+          python3.9 patch_pigz_issue.py "$KIVY_IOS_TOOLCHAIN_PATH"
           
           export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
