@@ -22,55 +22,58 @@ jobs:
           git clone https://github.com/kivy/kivy-ios.git
           cd kivy-ios
           python -m pip install -e .
-          ls -la
-          echo "Directly cloned kivy-ios repository"
 
       - name: Install dependencies
         run: |
           brew update
-          brew install autoconf automake libtool pkg-config gettext ccache
+          brew install autoconf automake libtool pkg-config gettext
           python -m pip install --upgrade pip
           python -m pip install Cython
+
+      - name: Full build attempt
+        run: |
+          cd ${{ github.workspace }}
+          mkdir -p iosbuild
+          cd iosbuild
           
-          # Tạo symlink cython-2.7
+          # Symlink cython
           CYTHON_PATH=$(which cython)
           sudo ln -sf "$CYTHON_PATH" /usr/local/bin/cython-2.7
-
-      - name: Check file structure
-        run: |
-          cd kivy-ios
-          ls -la
-          find . -name "toolchain.py"
-          python toolchain.py --help || true
           
-          # Xem workflows hỗ trợ
-          echo "Available recipes:"
-          python toolchain.py recipes || true
-
-      - name: Build step-by-step
-        run: |
-          mkdir -p ${{ github.workspace }}/iosbuild
-          cd ${{ github.workspace }}/iosbuild
-          
-          echo "====== Building python3 ======"
+          # Chạy toàn bộ quá trình build
           cd ${{ github.workspace }}/kivy-ios
           python toolchain.py build python3 || true
-          
-          echo "====== Building kivy ======"
           python toolchain.py build kivy || true
           
-          echo "====== Creating app ======"
-          python toolchain.py create ${{ github.workspace }}/iosbuild/beluga_chat ../main.py || true
+          # Tạo và build ứng dụng
+          echo "Creating app with improved error handling..."
+          python toolchain.py create ${{ github.workspace }}/iosbuild/beluga_chat ${{ github.workspace }}/main.py || true
           
-          echo "====== Looking for output files ======"
-          cd ${{ github.workspace }}
-          find . -name "*.app" -o -name "*.ipa" || true
-          find kivy-ios -name "*.a" || true
+          # Nếu create thành công, tiến hành build ứng dụng
+          if [ -d "${{ github.workspace }}/iosbuild/beluga_chat-ios" ]; then
+            cd ${{ github.workspace }}/iosbuild/beluga_chat-ios
+            echo "Building Xcode project..."
+            
+            # Cập nhật Info.plist
+            plutil -replace CFBundleIdentifier -string "com.beluga.chat" beluga_chat/Info.plist || true
+            
+            # Build ứng dụng
+            xcodebuild -scheme beluga_chat -sdk iphoneos -configuration Release clean archive -archivePath build/beluga_chat.xcarchive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO || true
+            
+            # Tạo IPA từ archive
+            mkdir -p build/Payload
+            cp -R build/beluga_chat.xcarchive/Products/Applications/beluga_chat.app build/Payload/
+            cd build
+            zip -r beluga_chat.ipa Payload
+            echo "IPA created at ${{ github.workspace }}/iosbuild/beluga_chat-ios/build/beluga_chat.ipa"
+          else
+            echo "App creation failed, cannot build IPA"
+          fi
 
-      - name: Upload all build products
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kivy-ios-build-outputs
+          name: beluga-chat-ios
           path: |
             ${{ github.workspace }}/kivy-ios/dist
             ${{ github.workspace }}/iosbuild
