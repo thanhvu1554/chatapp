@@ -120,7 +120,38 @@ workflows:
             find $CM_BUILD_DIR/kivy-ios -name "*.a" || true
           fi
 
+      - name: Liệt kê tất cả file artifacts
+        script: |
+          echo "===== LIỆT KÊ TẤT CẢ CÁC FILE QUAN TRỌNG ====="
+          echo "1. IPA files:"
+          find $CM_BUILD_DIR -name "*.ipa" || true
+          
+          echo "2. APP files:"
+          find $CM_BUILD_DIR -name "*.app" -type d || true
+          
+          echo "3. Xcode projects:"
+          find $CM_BUILD_DIR -name "*.xcodeproj" -type d || true
+          
+          echo "4. Library files (.a):"
+          find $CM_BUILD_DIR -name "*.a" | head -n 20 || true
+          
+          echo "5. Cấu trúc thư mục kivy-ios:"
+          ls -la $CM_BUILD_DIR/kivy-ios/ || true
+          
+          echo "6. Thư mục dist:"
+          ls -la $CM_BUILD_DIR/kivy-ios/dist/ || true
+          
+          echo "===== KẾT THÚC DANH SÁCH ====="
+
     artifacts:
       - kivy-ios/*-ios/build/IPA/*.ipa
-      - kivy-ios/dist
-      - iosbuild 
+      - kivy-ios/dist/**
+      - kivy-ios/*.app
+      - kivy-ios/**/*.app
+      - kivy-ios/**/*.a
+      - kivy-ios/*-ios/**
+      - $CM_BUILD_DIR/iosbuild/**
+      - kivy-ios/*.xcodeproj
+      - kivy-ios/**/*.xcodeproj
+      - $CM_BUILD_DIR/**/*.ipa
+      - $CM_BUILD_DIR/**/*.app 
