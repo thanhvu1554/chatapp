@@ -12,7 +12,7 @@ workflows:
       - name: Cài toàn bộ công cụ build cần thiết
         script: |
           brew update
-          brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git pigz
+          brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git pigz pbzip2
           export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
           
@@ -184,6 +184,12 @@ workflows:
           echo "replacement = r'\\1try:\\n\\1    self.use_pigz = sh.which(\"pigz\")\\n\\1except:\\n\\1    print(\"pigz not found, using standard compression\")\\n\\1    self.use_pigz = None'" >> patch_pigz_issue.py
           echo "" >> patch_pigz_issue.py
           echo "new_content = re.sub(pattern, replacement, content)" >> patch_pigz_issue.py
+          echo "" >> patch_pigz_issue.py
+          echo "# Tìm dòng: self.use_pbzip2 = sh.which('pbzip2')" >> patch_pigz_issue.py
+          echo "pattern2 = r'(\s+)self\.use_pbzip2 = sh\.which\([\'\"]pbzip2[\'\"]\)'" >> patch_pigz_issue.py
+          echo "replacement2 = r'\\1try:\\n\\1    self.use_pbzip2 = sh.which(\"pbzip2\")\\n\\1except:\\n\\1    print(\"pbzip2 not found, using standard compression\")\\n\\1    self.use_pbzip2 = None'" >> patch_pigz_issue.py 
+          echo "" >> patch_pigz_issue.py
+          echo "new_content = re.sub(pattern2, replacement2, new_content)" >> patch_pigz_issue.py
           echo "" >> patch_pigz_issue.py
           echo "with open(file_path, 'w') as f:" >> patch_pigz_issue.py
           echo "    f.write(new_content)" >> patch_pigz_issue.py
