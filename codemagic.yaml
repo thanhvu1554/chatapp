@@ -8,105 +8,78 @@ workflows:
         BUNDLE_ID: "com.beluga.chatt"
 
     scripts:
-      - name: Cài toàn bộ công cụ build cần thiết (FULL FIX)
+      - name: Cài toàn bộ công cụ build cần thiết
         script: |
           brew update
-
-          # Cài đầy đủ các tool cần thiết cho python3, libffi, openssl, v.v.
-          brew install python \
-                       autoconf automake libtool pkg-config \
-                       gettext gawk bash git
-
-          # Đảm bảo chúng được link đúng
-          brew link --overwrite automake
-          brew link --overwrite libtool
-          brew link --overwrite autoconf
-          brew link --overwrite gettext
-
-          # Kiểm tra lại PATH và tool đã sẵn sàng
+          brew install python autoconf automake libtool pkg-config gettext gawk bash git
+          brew link --overwrite automake autoconf libtool gettext
+          
           echo "✅ Kiểm tra tool:"
           which automake && automake --version
           which autoconf && autoconf --version
-          which libtool  && libtool --version
+          which libtool && libtool --version
           which pkg-config && pkg-config --version
 
-      - name: Cài kivy-ios
+      - name: Cài kivy-ios và dependencies
         script: |
-          pip3 install --upgrade pip
-          pip3 install virtualenv
-          pip3 install kivy-ios
+          pip3 install --upgrade pip virtualenv kivy-ios
 
-      - name: Tạo thư mục build
+      - name: Chuẩn bị thư mục build
         script: |
           mkdir -p $CM_BUILD_DIR/iosbuild
           cd $CM_BUILD_DIR/iosbuild
 
-      - name: Build các dependencies (python3, kivy)
+      - name: Build dependencies
         script: |
           cd $CM_BUILD_DIR/iosbuild
-
-          # Hạn chế RAM sử dụng để tránh OOM
           export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
+          
+          # Chỉ build những recipe thực sự tồn tại
+          for lib in openssl libffi python3 kivy; do
+            echo "📦 Building $lib..."
+            toolchain build $lib || { echo "❌ Build $lib failed"; exit 1; }
+          done
 
-          echo "📦 Build libffi..."
-          toolchain build libffi || { echo "❌ Build libffi failed"; exit 1; }
-
-          echo "📦 Build python3..."
-          toolchain build python3 || { echo "❌ Build python3 failed"; exit 1; }
-
-          echo "📦 Build kivy..."
-          toolchain build kivy || { echo "❌ Build kivy failed"; exit 1; }
-
-      - name: Tạo project từ main.py
+      - name: Tạo project từ source
         script: |
           cd $CM_BUILD_DIR/iosbuild
-
-          echo "📁 Kiểm tra workspace:"
-          ls -la ../
-
+          
           if [ -f "../kivy_chat_app/main.py" ]; then
-            echo "✅ Found main.py trong kivy_chat_app"
+            echo "✅ Using main.py from kivy_chat_app"
             toolchain create $APP_NAME ../kivy_chat_app/main.py
           elif [ -f "../main.py" ]; then
-            echo "✅ Found main.py trong thư mục gốc"
+            echo "✅ Using main.py from root"
             toolchain create $APP_NAME ../main.py
           else
-            echo "❌ Không tìm thấy main.py"
+            echo "❌ main.py not found"
+            find .. -name "main.py"
             exit 1
           fi
-
+          
           toolchain build $APP_NAME
 
-      - name: Tạo Xcode project & sửa Bundle ID
+      - name: Chuẩn bị Xcode project
         script: |
           cd $CM_BUILD_DIR/iosbuild
           toolchain xcode $APP_NAME
           cd $APP_NAME-ios
-
-          echo "📁 Kiểm tra cấu trúc thư mục:"
-          ls -la
-          echo "📁 Bên trong thư mục app:"
-          ls -la $APP_NAME/
-
+          
           PLIST_PATH="$APP_NAME/Info.plist"
           if [ -f "$PLIST_PATH" ]; then
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST_PATH"
-            echo "✅ Đã sửa Bundle ID trong Info.plist"
+            echo "✅ Updated Bundle ID"
           else
-            echo "⚠️ Không tìm thấy Info.plist"
+            echo "⚠️ Info.plist not found at $PLIST_PATH"
             find . -name "Info.plist"
+            exit 1
           fi
 
-      - name: Build IPA unsigned
+      - name: Build IPA
         script: |
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
-
-          echo "📦 Build archive..."
-          xcodebuild -scheme $APP_NAME -configuration Release -archivePath $APP_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-
-          echo "📦 Tạo exportOptions.plist"
-          cat > exportOptions.plist << EOL
+          
+          cat > exportOptions.plist <<EOL
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -118,11 +91,17 @@ workflows:
           </dict>
           </plist>
           EOL
-
-          echo "📦 Export IPA"
-          xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive -exportOptionsPlist exportOptions.plist -exportPath build/Release-iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-
-          echo "📦 Kiểm tra IPA:"
+          
+          xcodebuild -scheme $APP_NAME -configuration Release \
+                    -archivePath $APP_NAME.xcarchive archive \
+                    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+                    
+          xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive \
+                    -exportOptionsPlist exportOptions.plist \
+                    -exportPath build/Release-iphoneos \
+                    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          
+          echo "✅ Build completed. IPA location:"
           find build -name "*.ipa"
 
     artifacts:
