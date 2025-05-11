@@ -1,0 +1,36 @@
+workflows:
+  kivy-ios-unsigned:
+    name: Beluga Chat
+    environment:
+      xcode: latest
+      vars:
+        APP_NAME: "beluga_chat_sapp"
+        BUNDLE_ID: "com.beluga.chatt"
+    scripts:
+      - name: Cài Python & pip
+        script: |
+          brew install python
+          pip3 install --upgrade pip
+          pip3 install virtualenv
+      - name: Cài kivy-ios
+        script: |
+          pip3 install kivy-ios
+      - name: Build dependencies
+        script: |
+          cd $CM_BUILD_DIR
+          mkdir iosbuild
+          cd iosbuild
+          toolchain create $APP_NAME ../kivy_chat_app/main.py $BUNDLE_ID
+          toolchain build python3 kivy pycryptodome requests pillow
+          toolchain build $APP_NAME
+      - name: Tạo Xcode project
+        script: |
+          cd $CM_BUILD_DIR/iosbuild
+          toolchain xcode $APP_NAME
+      - name: Build IPA unsigned
+        script: |
+          cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
+          xcodebuild -scheme $APP_NAME -configuration Release -archivePath $APP_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive -exportOptionsPlist <(echo '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>method</key><string>development</string><key>signingStyle</key><string>manual</string></dict></plist>') -exportPath build/Release-iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+    artifacts:
+      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa
