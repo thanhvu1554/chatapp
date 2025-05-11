@@ -23,86 +23,80 @@ jobs:
           brew install autoconf automake libtool pkg-config gettext ccache
           python -m pip install --upgrade pip
           python -m pip install Cython
-          # Thử pip install từ trực tiếp từ repo
-          pip install git+https://github.com/kivy/kivy-ios.git@master
-
-      - name: Fix libffi patch issue
-        run: |
-          # Sửa issue với hostlibffi
-          RECIPE_PATH=$(python -c "import kivy_ios; import os; print(os.path.join(kivy_ios.__path__[0], 'recipes', 'hostlibffi', '__init__.py'))")
-          echo "Fixing $RECIPE_PATH"
-          
-          # Tạo file sửa lỗi
-          cat > fix_hostlibffi.py << 'EOF'
-          import sys
-          
-          # Đọc file recipe
-          with open(sys.argv[1], 'r') as f:
-              content = f.read()
-          
-          # Thay thế phương thức prebuild_arch để tránh áp dụng patch
-          fixed_content = content.replace(
-              'def prebuild_arch(self, arch):',
-              'def prebuild_arch(self, arch):\n        # Patch disabled to avoid errors\n        return\n        # Original code below'
-          )
-          
-          # Lưu lại
-          with open(sys.argv[1], 'w') as f:
-              f.write(fixed_content)
-          
-          print(f"Fixed {sys.argv[1]}")
-          EOF
-          
-          python fix_hostlibffi.py "$RECIPE_PATH"
+          python -m pip install kivy-ios==1.2.0
           
           # Tạo symlink cython-2.7
           CYTHON_PATH=$(which cython)
           sudo ln -sf "$CYTHON_PATH" /usr/local/bin/cython-2.7
+          
+          # Kiểm tra cấu trúc thư mục
+          python -c "import kivy_ios; print(f'kivy_ios path: {kivy_ios.__path__}')"
+          find $(python -c "import kivy_ios; print(kivy_ios.__path__[0])") -type d | sort
 
-      - name: Build basic dependencies
+      - name: Debug kivy-ios installation
+        run: |
+          # Kiểm tra chi tiết hơn về cài đặt kivy-ios
+          echo "Checking kivy-ios structure"
+          python -c "import sys; print(sys.path)"
+          python -c "import kivy_ios; print(dir(kivy_ios))"
+          
+          # Tìm tất cả file __init__.py
+          find $(python -c "import kivy_ios; print(kivy_ios.__path__[0])") -name "__init__.py" | sort
+          
+          # Tạo script Python khả thi hơn - tìm và sửa tất cả các file có chứa xcode10.patch
+          cat > find_patch_files.py << 'EOF'
+          import os
+          import sys
+          from pathlib import Path
+          import kivy_ios
+          
+          kivy_path = Path(kivy_ios.__path__[0])
+          print(f"Searching in {kivy_path}")
+          
+          patch_files = []
+          # Tìm tất cả các file có chứa 'xcode10.patch'
+          for root, dirs, files in os.walk(kivy_path):
+              for file in files:
+                  filepath = os.path.join(root, file)
+                  try:
+                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                          content = f.read()
+                          if 'xcode10.patch' in content:
+                              patch_files.append(filepath)
+                              print(f"Found xcode10.patch in {filepath}")
+                              
+                              # Sửa đổi file này để tránh áp dụng patch
+                              with open(filepath, 'w', encoding='utf-8') as fw:
+                                  new_content = content.replace('self.apply_patch("libffi-xcode10.patch")', '# patch disabled: self.apply_patch("libffi-xcode10.patch")')
+                                  fw.write(new_content)
+                                  print(f"  - Patched file to disable xcode10.patch")
+                  except Exception as e:
+                      pass
+          
+          if not patch_files:
+              print("No files containing xcode10.patch found")
+          EOF
+          
+          python find_patch_files.py
+
+      - name: Build dependencies
         run: |
           cd ${{ github.workspace }}
           mkdir -p iosbuild
           cd iosbuild
           
-          # Bắt đầu với một số dependency cơ bản
-          echo "Building hostpython3..."
-          python -m kivy_ios.toolchain build hostpython3
-          
+          # Thử chỉ build kivy
           echo "Building kivy..."
-          python -m kivy_ios.toolchain build kivy
-       
-      - name: Build app
-        run: |
-          cd ${{ github.workspace }}/iosbuild
+          python -m kivy_ios.toolchain build kivy || true
           
-          # Tạo app
-          echo "Creating app..."
-          python -m kivy_ios.toolchain create beluga_chat_app ../main.py
-          
-          echo "Building app..."
-          python -m kivy_ios.toolchain build beluga_chat_app
-          
-          echo "Creating Xcode project..."
-          python -m kivy_ios.toolchain xcode beluga_chat_app
+          # Kiểm tra các file đã build
+          echo "Checking if build succeeded:"
+          find . -type d -o -name "*.a" | sort
 
-      - name: Build IPA
-        run: |
-          cd ${{ github.workspace }}/iosbuild/beluga_chat_app-ios
-          
-          # Sửa Xcode settings nếu cần
-          sed -i '' -e 's/BITCODE_GENERATION_MODE=bitcode //g' *.xcodeproj/project.pbxproj || true
-          
-          # Build IPA
-          xcodebuild -scheme beluga_chat_app -configuration Release -archivePath beluga_chat_app.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO || true
-          
-          # Kiểm tra xem đã có file IPA chưa
-          find . -name "*.app" -o -name "*.ipa"
-
-      - name: Upload build artifacts
+      - name: Upload info
         uses: actions/upload-artifact@v4
         with:
-          name: beluga-chat-ios
+          name: build-debug-info
           path: |
-            ${{ github.workspace }}/iosbuild/beluga_chat_app-ios/build/Release-iphoneos/
-            ${{ github.workspace }}/iosbuild/beluga_chat_app-ios/*.xcarchive/
+            ${{ github.workspace }}/iosbuild/
+            ${{ github.workspace }}/*.py
