@@ -8,7 +8,7 @@ workflows:
         BUNDLE_ID: "com.beluga.chatt"
 
     scripts:
-      - name: Cài automake và công cụ build cần thiết
+      - name: Cài công cụ build & automake
         script: |
           brew update
           brew install automake libtool pkg-config
@@ -25,22 +25,47 @@ workflows:
         script: |
           pip3 install kivy-ios
 
-      - name: Build dependencies
+      - name: Build dependencies với debug chi tiết
         script: |
           cd $CM_BUILD_DIR
           mkdir -p iosbuild
           cd iosbuild
 
-          echo "🛠️ Bắt đầu build python3"
-          toolchain build python3 || { echo "❌ Build python3 failed"; exit 1; }
+          echo "🌐 Tải trước openssl để tránh lỗi mạng"
+          mkdir -p .cache
+          curl -L -o .cache/hostopenssl-openssl-1.1.1w.tar.gz https://www.openssl.org/source/openssl-1.1.1w.tar.gz
 
-          echo "🛠️ Bắt đầu build kivy"
+          echo "🔧 Giới hạn số job về 2 để giảm RAM"
+          export KIVY_IOS_JOBS=2
+
+          echo "📦 Build hostopenssl..."
+          toolchain build hostopenssl || { echo "❌ Build hostopenssl failed"; exit 1; }
+
+          echo "📦 Build libffi..."
+          toolchain build libffi || { echo "❌ Build libffi failed"; exit 1; }
+
+          echo "📦 Build openssl..."
+          toolchain build openssl || { echo "❌ Build openssl failed"; exit 1; }
+
+          echo "📦 Build hostpython3..."
+          toolchain build hostpython3 || { echo "❌ Build hostpython3 failed"; exit 1; }
+
+          echo "📦 Build python3..."
+          toolchain build python3 || { 
+            echo "❌ Build python3 failed"; 
+            echo "📁 Kiểm tra thư mục .cache:"
+            ls -lhR .cache
+            echo "📁 Kiểm tra dung lượng ổ đĩa:"
+            df -h
+            exit 1; 
+          }
+
+          echo "📦 Build kivy..."
           toolchain build kivy || { echo "❌ Build kivy failed"; exit 1; }
 
       - name: Tạo project từ main.py
         script: |
           cd $CM_BUILD_DIR/iosbuild
-
           echo "📁 Kiểm tra workspace:"
           ls -la ../
 
