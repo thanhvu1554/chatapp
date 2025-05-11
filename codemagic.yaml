@@ -32,26 +32,26 @@ workflows:
           
           # Sửa file kivy-ios/toolchain.py nếu gặp lỗi libffi
           cd $TOOLCHAIN_DIR/kivy_ios
-          cat > patch_libffi.py << 'EOL'
-import os
-import fileinput
+          cat > patch_libffi.py << 'EOF'
+          import os
+          import fileinput
 
-# Patch file libffi.py để sửa lỗi cấu hình
-recipe_file = 'recipes/libffi/__init__.py'
-if os.path.exists(recipe_file):
-    print("Patching libffi recipe...")
-    with fileinput.FileInput(recipe_file, inplace=True) as file:
-        for line in file:
-            if 'def get_host(self, arch):' in line:
-                print(line, end='')
-                print('        if "arm64" in arch:')
-                print('            return "aarch64-apple-darwin"')
-            else:
-                print(line, end='')
-    print("Done patching libffi recipe")
-else:
-    print("libffi recipe file not found")
-EOL
+          # Patch file libffi.py để sửa lỗi cấu hình
+          recipe_file = 'recipes/libffi/__init__.py'
+          if os.path.exists(recipe_file):
+              print("Patching libffi recipe...")
+              with fileinput.FileInput(recipe_file, inplace=True) as file:
+                  for line in file:
+                      if 'def get_host(self, arch):' in line:
+                          print(line, end='')
+                          print('        if "arm64" in arch:')
+                          print('            return "aarch64-apple-darwin"')
+                      else:
+                          print(line, end='')
+              print("Done patching libffi recipe")
+          else:
+              print("libffi recipe file not found")
+          EOF
           python3 patch_libffi.py
 
       - name: Chuẩn bị thư mục build
