@@ -50,6 +50,12 @@ workflows:
               sudo ln -sf "$CYTHON_PATH_PY39" /usr/local/bin/cython
           fi
           
+          # ĐẢM BẢO tồn tại cython-2.7 (nhiều bản kivy-ios yêu cầu) -> trỏ tới cùng cython
+          if [ ! -x "/usr/local/bin/cython-2.7" ] || [ "$(readlink /usr/local/bin/cython-2.7)" != "$CYTHON_PATH_PY39" ]; then
+              echo "Creating/Updating symlink for /usr/local/bin/cython-2.7 to point to $CYTHON_PATH_PY39..."
+              sudo ln -sf "$CYTHON_PATH_PY39" /usr/local/bin/cython-2.7
+          fi
+          
           export PATH="/usr/local/bin:$PATH"
           echo "✅ Final Cython path check (used by shell): $(which cython)"
           export CYTHON=$(which cython)
