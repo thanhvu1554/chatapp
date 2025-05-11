@@ -6,6 +6,7 @@ workflows:
       vars:
         APP_NAME: "beluga_chat_sapp"
         BUNDLE_ID: "com.beluga.chatt"
+        KIVY_IOS_VERSION: "1.3.0" # Phiên bản ổn định hơn
 
     scripts:
       - name: Cài toàn bộ công cụ build cần thiết
@@ -19,40 +20,21 @@ workflows:
           which autoconf && autoconf --version
           which libtool && libtool --version
           which pkg-config && pkg-config --version
+          
+          # Cài đặt các công cụ và biến môi trường cần thiết cho quá trình build Python
+          export PATH="/usr/local/opt/gettext/bin:$PATH"
+          brew install openssl@1.1 sdl2 sdl2_image sdl2_ttf sdl2_mixer
+          ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libssl.1.1.dylib /usr/local/lib/ || true
+          ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libcrypto.1.1.dylib /usr/local/lib/ || true
 
       - name: Cài kivy-ios và dependencies
         script: |
           python3 -m pip install --upgrade pip
           pip3 install wheel virtualenv Cython
-          pip3 install kivy-ios==2022.07.19
+          pip3 install kivy-ios==$KIVY_IOS_VERSION
           
-          # Sửa lỗi kivy-ios
-          TOOLCHAIN_DIR=$(pip3 show kivy-ios | grep Location | cut -d ' ' -f 2)
-          echo "Kivy-iOS path: $TOOLCHAIN_DIR"
-          
-          # Sửa file kivy-ios/toolchain.py nếu gặp lỗi libffi
-          cd $TOOLCHAIN_DIR/kivy_ios
-          cat > patch_libffi.py << 'EOF'
-          import os
-          import fileinput
-
-          # Patch file libffi.py để sửa lỗi cấu hình
-          recipe_file = 'recipes/libffi/__init__.py'
-          if os.path.exists(recipe_file):
-              print("Patching libffi recipe...")
-              with fileinput.FileInput(recipe_file, inplace=True) as file:
-                  for line in file:
-                      if 'def get_host(self, arch):' in line:
-                          print(line, end='')
-                          print('        if "arm64" in arch:')
-                          print('            return "aarch64-apple-darwin"')
-                      else:
-                          print(line, end='')
-              print("Done patching libffi recipe")
-          else:
-              print("libffi recipe file not found")
-          EOF
-          python3 patch_libffi.py
+          # Thông tin phiên bản
+          echo "Using kivy-ios version: $KIVY_IOS_VERSION"
           
           # Xóa cache cũ nếu có để clean build
           rm -rf ~/.kivy-ios/build/* || true
@@ -66,44 +48,89 @@ workflows:
       - name: Build iOS dependencies
         script: |
           cd $CM_BUILD_DIR/iosbuild
+          
+          # Thiết lập môi trường build
           export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
+          export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+          export IPHONEOS_DEPLOYMENT_TARGET=10.0
+          export MACOSX_DEPLOYMENT_TARGET=10.15
+          export PKG_CONFIG_PATH="/usr/local/opt/openssl@1.1/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export CFLAGS="-I/usr/local/include -I/usr/local/opt/openssl@1.1/include"
+          export LDFLAGS="-L/usr/local/lib -L/usr/local/opt/openssl@1.1/lib"
           
-          # Build các dependencies chính xác theo thứ tự
-          echo "📦 Building libffi..."
-          toolchain build libffi || {
-            echo "⚠️ Thử lại libffi sau khi xóa cache..."
-            rm -rf ~/.kivy-ios/build/libffi
-            rm -rf ~/.kivy-ios/dist/libffi
-            toolchain build libffi || echo "⚠️ Thất bại với libffi, tiếp tục xử lý..."
-          }
+          echo "🔧 Thiết lập môi trường build:"
+          echo "SDKROOT: $SDKROOT"
+          echo "IPHONEOS_DEPLOYMENT_TARGET: $IPHONEOS_DEPLOYMENT_TARGET"
+          echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
           
-          echo "📦 Building openssl..."
-          toolchain build openssl || {
-            echo "⚠️ Thử lại openssl sau khi xóa cache..."
-            rm -rf ~/.kivy-ios/build/openssl
-            rm -rf ~/.kivy-ios/dist/openssl
-            toolchain build openssl || echo "⚠️ Thất bại với openssl, tiếp tục xử lý..."
-          }
+          # Build từng dependency theo thứ tự - phương pháp cẩn thận
+          for recipe in libffi openssl; do
+            echo "📦 Building $recipe..."
+            toolchain build $recipe || {
+              echo "⚠️ Thử lại $recipe sau khi xóa cache..."
+              rm -rf ~/.kivy-ios/build/$recipe
+              rm -rf ~/.kivy-ios/dist/$recipe
+              toolchain build $recipe || echo "⚠️ Thất bại với $recipe, tiếp tục xử lý..."
+            }
+          done
           
-          echo "📦 Building python3..."
+          # PYTHON BUILD - Đoạn quan trọng nhất
+          echo "📦 Building python3 với CFLAGS/LDFLAGS đặc biệt..."
+          export _PYTHON_HOST_PLATFORM=darwin
+          export PYTHONPATH=$(pwd)
+          export CC=$(xcrun -find -sdk iphoneos clang)
+          
+          # Build python3 với tùy chọn đặc biệt
           toolchain build python3 || {
-            echo "⚠️ Thử lại python3 sau khi xóa cache..."
+            echo "⚠️ Thử lại python3 với phương pháp đặc biệt..."
             rm -rf ~/.kivy-ios/build/python3
             rm -rf ~/.kivy-ios/dist/python3
+            
+            # Thử phương pháp thứ 2 - sửa trực tiếp source code
+            KIVY_IOS_ROOT=$(pip3 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
+            cd $KIVY_IOS_ROOT
+            echo "Patching Python3 recipe..."
+            
+            # Tạo file patch cho Python3
+            cat > patch_python.py << 'EOF'
+import os
+import fileinput
+
+recipe_file = 'recipes/python3/__init__.py'
+if os.path.exists(recipe_file):
+    print("Patching Python3 recipe...")
+    with fileinput.FileInput(recipe_file, inplace=True) as file:
+        for line in file:
+            # Sửa các lỗi tương thích
+            if 'def get_recipe_env' in line:
+                print(line, end='')
+                print('        env["_PYTHON_HOST_PLATFORM"] = "darwin"')
+                print('        env["PYTHONPATH"] = os.getcwd()')
+            else:
+                print(line, end='')
+    print("Done patching Python3 recipe")
+else:
+    print("Python3 recipe file not found")
+EOF
+            python3 patch_python.py
+            
+            # Build python3 sau khi patch
+            cd $CM_BUILD_DIR/iosbuild
             toolchain build python3 || {
-              echo "❌ Lỗi Python3 - Đây là thành phần quan trọng"
+              echo "❌ Lỗi Python3 - Sử dụng kivy-ios phiên bản cũ hơn hoặc sử dụng image có cấu hình khác"
               exit 1
             }
           }
           
+          # Build kivy
           echo "📦 Building kivy..."
           toolchain build kivy || {
             echo "⚠️ Thử lại kivy sau khi xóa cache..."
             rm -rf ~/.kivy-ios/build/kivy
             rm -rf ~/.kivy-ios/dist/kivy
             toolchain build kivy || {
-              echo "❌ Lỗi Kivy - Đây là thành phần quan trọng"
+              echo "❌ Lỗi Kivy - Không thể tiếp tục"
               exit 1
             }
           }
