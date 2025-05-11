@@ -221,4 +221,4 @@ else:
           find build -name "*.ipa"
 
     artifacts:
-      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa 
+      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa
