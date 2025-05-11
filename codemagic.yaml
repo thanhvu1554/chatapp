@@ -13,34 +13,70 @@ workflows:
         script: |
           brew update
           brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git
-          # Ưu tiên PATH cho brew Python 3.9
-          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
           
-          echo "✅ Kiểm tra Python và pip sau khi thiết lập PATH:"
-          which python3.9 && python3.9 --version
-          which pip3.9 && pip3.9 --version
+          echo "✅ Python version: $(python3.9 --version)"
+          echo "✅ pip version: $(pip3.9 --version)"
+          echo "✅ Python path: $(which python3.9)"
+          echo "✅ pip path: $(which pip3.9)"
+          echo "✅ Current PATH: $PATH"
 
           brew link --overwrite automake autoconf libtool gettext
-          
-          # Cài đặt các công cụ và biến môi trường cần thiết cho quá trình build Python
           brew install openssl@1.1 sdl2 sdl2_image sdl2_ttf sdl2_mixer
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libssl.1.1.dylib /usr/local/lib/ || true
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libcrypto.1.1.dylib /usr/local/lib/ || true
 
-      - name: Cài kivy-ios và dependencies
+      - name: Cài kivy-ios và Cython, và kiểm tra Cython
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
 
           python3.9 -m pip install --upgrade pip
-          pip3.9 install wheel virtualenv Cython # Cython sẽ được cài cho python3.9
+          # Cài Cython trước và kiểm tra kỹ
+          pip3.9 install Cython
+          echo "✅ Cython version: $(cython --version || cython3 --version)"
+          echo "✅ Cython path: $(which cython || which cython3)"
+          
+          # Thử tạo symlink nếu 'cython' không được tìm thấy trực tiếp
+          if ! command -v cython &> /dev/null; then
+              if command -v cython3 &> /dev/null; then
+                  echo "Creating symlink for cython from cython3..."
+                  sudo ln -sf $(which cython3) /usr/local/bin/cython
+              else
+                  echo "❌ Cython (cython or cython3) not found after installation!"
+                  exit 1
+              fi
+          fi
+          # Đảm bảo /usr/local/bin có trong PATH (thường là mặc định)
+          export PATH="/usr/local/bin:$PATH"
+          echo "✅ Final Cython path check: $(which cython)"
+          export CYTHON=$(which cython) # Đặt biến môi trường CYTHON
+          echo "✅ CYTHON env var set to: $CYTHON"
+
+          pip3.9 install wheel virtualenv
           pip3.9 install kivy-ios==$KIVY_IOS_VERSION
           
           echo "Using kivy-ios version: $KIVY_IOS_VERSION installed for Python 3.9"
           
           rm -rf ~/.kivy-ios/build/* || true
           rm -rf ~/.kivy-ios/dist/* || true
+          
+          # Patch toolchain.py để tìm cython đúng cách hơn
+          KIVY_IOS_TOOLCHAIN_FILE=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
+          if [ -f "$KIVY_IOS_TOOLCHAIN_FILE" ]; then
+            echo "Patching $KIVY_IOS_TOOLCHAIN_FILE to prefer 'cython' or 'cython3'..."
+            # Thay thế việc tìm kiếm cython-2.7 hoặc các tên cụ thể bằng một trình tự ưu tiên hơn
+            sed -i.bak \
+              "s/cython_fn = self.cython_fn ChoiceContainer(\(cython_variants\))/cython_fn = self.cython_fn ChoiceContainer(('cython', 'cython3'))/g" \
+              "$KIVY_IOS_TOOLCHAIN_FILE"
+            sed -i.bak \
+              "s/self.cython = cython/self.cython = sh.which('cython') or sh.which('cython3') or cython/g" \
+              "$KIVY_IOS_TOOLCHAIN_FILE"
+            echo "Patched toolchain.py for Cython detection."
+          else
+            echo "⚠️ Could not find $KIVY_IOS_TOOLCHAIN_FILE to patch."
+          fi
 
       - name: Chuẩn bị thư mục build
         script: |
@@ -49,8 +85,10 @@ workflows:
 
       - name: Build iOS dependencies
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
           export PATH="/usr/local/opt/gettext/bin:$PATH"
+          export PATH="/usr/local/bin:$PATH" # Đảm bảo symlink cython được dùng
+          export CYTHON=$(which cython) # Đảm bảo biến môi trường được kế thừa
           cd $CM_BUILD_DIR/iosbuild
           
           export MAKEFLAGS="-j2"
@@ -63,6 +101,7 @@ workflows:
           export LDFLAGS="-L/usr/local/lib -L/usr/local/opt/openssl@1.1/lib"
           
           echo "🔧 SDKROOT: $SDKROOT"
+          echo "🔧 CYTHON for this step: $CYTHON"
           
           for recipe in libffi openssl; do
             echo "📦 Building $recipe..."
@@ -132,7 +171,9 @@ workflows:
 
       - name: Tạo project từ source
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
+          export PATH="/usr/local/bin:$PATH"
+          export CYTHON=$(which cython)
           cd $CM_BUILD_DIR/iosbuild
           if [ -f "../kivy_chat_app/main.py" ]; then
             python3.9 -m kivy_ios.toolchain create $APP_NAME ../kivy_chat_app/main.py
@@ -149,7 +190,9 @@ workflows:
 
       - name: Chuẩn bị Xcode project
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
+          export PATH="/usr/local/bin:$PATH"
+          export CYTHON=$(which cython)
           cd $CM_BUILD_DIR/iosbuild
           python3.9 -m kivy_ios.toolchain xcode $APP_NAME
           cd $APP_NAME-ios
