@@ -1,336 +1,109 @@
 workflows:
-  kivy-ios-unsigned:
-    name: Beluga Chat
+  kivy-ios-build:
+    name: Beluga Chat iOS
     environment:
       xcode: latest
       vars:
-        APP_NAME: "beluga_chat_sapp"
-        BUNDLE_ID: "com.beluga.chatt"
-        KIVY_IOS_VERSION: "1.3.0" # Phiên bản ổn định hơn
+        APP_NAME: "beluga_chat_app"
+        BUNDLE_ID: "com.beluga.chat"
 
     scripts:
-      - name: Cài toàn bộ công cụ build cần thiết
+      - name: Cài đặt dependencies
         script: |
           brew update
-          brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git pigz pbzip2
-          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
-          export PATH="/usr/local/opt/gettext/bin:$PATH"
+          brew install autoconf automake libtool pkg-config gettext ccache pigz pbzip2
+          python3 -m pip install --upgrade pip
+          python3 -m pip install Cython pillow kivy
           
-          echo "✅ Python version: $(python3.9 --version)"
-          echo "✅ pip version: $(pip3.9 --version)"
-          echo "✅ Python path: $(which python3.9)"
-          echo "✅ pip path: $(which pip3.9)"
-          echo "✅ Current PATH: $PATH"
-          echo "✅ /usr/bin/which cython-2.7: $(/usr/bin/which cython-2.7 || echo 'not found')"
+          # Kiểm tra phiên bản và đường dẫn
+          echo "✅ Python: $(python3 --version)"
+          echo "✅ Cython: $(cython --version || cython3 --version)"
+          echo "✅ Cython path: $(which cython || which cython3)"
+          
+          # Tạo symlink cython-2.7 (cần thiết cho kivy-ios)
+          CYTHON_PATH=$(which cython || which cython3)
+          sudo ln -sf "$CYTHON_PATH" /usr/local/bin/cython-2.7
+          echo "✅ Created symlink cython-2.7 -> $CYTHON_PATH"
 
-          brew link --overwrite automake autoconf libtool gettext
-          brew install openssl@1.1 sdl2 sdl2_image sdl2_ttf sdl2_mixer
-          ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libssl.1.1.dylib /usr/local/lib/ || true
-          ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libcrypto.1.1.dylib /usr/local/lib/ || true
-
-      - name: Cài kivy-ios, Cython, và patch toolchain.py
+      - name: Cài đặt kivy-ios từ GitHub
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
-          export PATH="/usr/local/opt/gettext/bin:$PATH"
-
-          python3.9 -m pip install --upgrade pip
-          pip3.9 install Cython
-          echo "✅ Cython version (Python 3.9): $(cython --version || cython3 --version)"
-          CYTHON_PATH_PY39=$(which cython || which cython3)
-          echo "✅ Cython path (Python 3.9): $CYTHON_PATH_PY39"
+          # Cài đặt kivy-ios trực tiếp từ GitHub để có phiên bản mới nhất
+          git clone https://github.com/kivy/kivy-ios.git
+          cd kivy-ios
+          python3 -m pip install -e .
           
-          if [ -z "$CYTHON_PATH_PY39" ]; then
-              echo "❌ Cython (cython or cython3) for Python 3.9 not found after installation!"
-              exit 1
+          # Kiểm tra cài đặt
+          python3 -c "import kivy_ios; print(f'kivy-ios path: {kivy_ios.__path__[0]}')"
+          python3 toolchain.py --help || true
+          
+          # Liệt kê các recipes có sẵn
+          echo "Available recipes:"
+          python3 toolchain.py recipes || true
+
+      - name: Kiểm tra thư mục dự án
+        script: |
+          echo "Tìm file main.py:"
+          find $CM_BUILD_DIR -name "main.py" | sort
+          
+          # Xác nhận main.py trong kivy_chat_app
+          if [ -f "$CM_BUILD_DIR/kivy_chat_app/main.py" ]; then
+            echo "✅ Tìm thấy file main.py trong kivy_chat_app"
+          else
+            echo "❌ Không tìm thấy main.py trong kivy_chat_app"
+            exit 1
           fi
 
-          # Tạo symlink 'cython' nếu nó chưa trỏ đúng
-          if [ ! -x "/usr/local/bin/cython" ] || [ "$(readlink /usr/local/bin/cython)" != "$CYTHON_PATH_PY39" ]; then
-              echo "Creating/Updating symlink for /usr/local/bin/cython to point to $CYTHON_PATH_PY39..."
-              sudo ln -sf "$CYTHON_PATH_PY39" /usr/local/bin/cython
-          fi
-          
-          # ĐẢM BẢO tồn tại cython-2.7 (nhiều bản kivy-ios yêu cầu) -> trỏ tới cùng cython
-          if [ ! -x "/usr/local/bin/cython-2.7" ] || [ "$(readlink /usr/local/bin/cython-2.7)" != "$CYTHON_PATH_PY39" ]; then
-              echo "Creating/Updating symlink for /usr/local/bin/cython-2.7 to point to $CYTHON_PATH_PY39..."
-              sudo ln -sf "$CYTHON_PATH_PY39" /usr/local/bin/cython-2.7
-          fi
-          
-          export PATH="/usr/local/bin:$PATH"
-          echo "✅ Final Cython path check (used by shell): $(which cython)"
-          export CYTHON=$(which cython)
-          echo "✅ CYTHON env var set to: $CYTHON"
-
-          pip3.9 install wheel virtualenv
-          pip3.9 install kivy-ios==$KIVY_IOS_VERSION
-          echo "Using kivy-ios version: $KIVY_IOS_VERSION installed for Python 3.9"
-          
-          # Script Python để patch toolchain.py
-          KIVY_IOS_TOOLCHAIN_FILE=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
-          echo "Attempting to patch $KIVY_IOS_TOOLCHAIN_FILE for Cython variants..."
-
-          # Tạo script python thay vì sử dụng heredoc
-          echo "import os" > patch_toolchain_script.py
-          echo "import sys" >> patch_toolchain_script.py
-          echo "import fileinput" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "toolchain_file_path = sys.argv[1]" >> patch_toolchain_script.py
-          echo "# Dòng gốc cần tìm (có thể có các khoảng trắng khác nhau)" >> patch_toolchain_script.py
-          echo "# Tuples of variants seen in different kivy-ios versions/contexts" >> patch_toolchain_script.py
-          echo "possible_original_lines = [" >> patch_toolchain_script.py
-          echo "    'cython_variants = (\"cython-2.7\", \"cython\", \"cython3\")'," >> patch_toolchain_script.py
-          echo "    'cython_variants = (\"cython\", \"cython-2.7\", \"cython3\")'," >> patch_toolchain_script.py
-          echo "    'cython_variants = (\"cython3\", \"cython-2.7\", \"cython\")'," >> patch_toolchain_script.py
-          echo "    'cython_variants = (\"cython-2.7\", \"cython3\", \"cython\")'" >> patch_toolchain_script.py
-          echo "]" >> patch_toolchain_script.py
-          echo "replacement_line = 'cython_variants = (\"cython\", \"cython3\") # Patched by Codemagic assistant to prioritize local cython\\n'" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "if not os.path.isfile(toolchain_file_path):" >> patch_toolchain_script.py
-          echo "    print(f\"Error: {toolchain_file_path} not found or is not a file.\")" >> patch_toolchain_script.py
-          echo "    sys.exit(1)" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "patched_successfully = False" >> patch_toolchain_script.py
-          echo "lines_written = 0" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "try:" >> patch_toolchain_script.py
-          echo "    # Tạo file backup" >> patch_toolchain_script.py
-          echo "    backup_path = toolchain_file_path + \".bak-cython-patch\"" >> patch_toolchain_script.py
-          echo "    if os.path.exists(backup_path):" >> patch_toolchain_script.py
-          echo "        os.remove(backup_path)" >> patch_toolchain_script.py
-          echo "    os.rename(toolchain_file_path, backup_path)" >> patch_toolchain_script.py
-          echo "    print(f\"Created backup: {backup_path}\")" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "    with open(backup_path, 'r') as infile, open(toolchain_file_path, 'w') as outfile:" >> patch_toolchain_script.py
-          echo "        for line_number, line in enumerate(infile, 1):" >> patch_toolchain_script.py
-          echo "            stripped_line = line.strip()" >> patch_toolchain_script.py
-          echo "            was_patched_this_line = False" >> patch_toolchain_script.py
-          echo "            for original_variant_line_template in possible_original_lines:" >> patch_toolchain_script.py
-          echo "                # So sánh sau khi loại bỏ khoảng trắng không cần thiết giữa các phần tử tuple" >> patch_toolchain_script.py
-          echo "                normalized_original = original_variant_line_template.replace(\", \", \",\")" >> patch_toolchain_script.py
-          echo "                normalized_stripped_line = stripped_line.replace(\", \", \",\")" >> patch_toolchain_script.py
-          echo "                if normalized_original in normalized_stripped_line and stripped_line.startswith(\"cython_variants\"):" >> patch_toolchain_script.py
-          echo "                    outfile.write(replacement_line)" >> patch_toolchain_script.py
-          echo "                    print(f\"  Line {line_number} Replaced: {stripped_line}\")" >> patch_toolchain_script.py
-          echo "                    print(f\"  With:           {replacement_line.strip()}\")" >> patch_toolchain_script.py
-          echo "                    patched_successfully = True" >> patch_toolchain_script.py
-          echo "                    was_patched_this_line = True" >> patch_toolchain_script.py
-          echo "                    break " >> patch_toolchain_script.py
-          echo "            if not was_patched_this_line:" >> patch_toolchain_script.py
-          echo "                outfile.write(line)" >> patch_toolchain_script.py
-          echo "            lines_written +=1" >> patch_toolchain_script.py
-          echo "    " >> patch_toolchain_script.py
-          echo "    print(f\"Total lines written to new file: {lines_written}\")" >> patch_toolchain_script.py
-          echo "    if patched_successfully:" >> patch_toolchain_script.py
-          echo "        print(f\"Successfully patched {toolchain_file_path}.\")" >> patch_toolchain_script.py
-          echo "    else:" >> patch_toolchain_script.py
-          echo "        print(f\"Warning: Target line for Cython variants not found in {toolchain_file_path}. Restoring from backup.\")" >> patch_toolchain_script.py
-          echo "        os.remove(toolchain_file_path) # remove the unpatched (new) file" >> patch_toolchain_script.py
-          echo "        os.rename(backup_path, toolchain_file_path) # restore backup" >> patch_toolchain_script.py
-          echo "        sys.exit(1) # Thoát nếu không patch được" >> patch_toolchain_script.py
-          echo "" >> patch_toolchain_script.py
-          echo "except Exception as e:" >> patch_toolchain_script.py
-          echo "    print(f\"Error during patching of {toolchain_file_path}: {e}\")" >> patch_toolchain_script.py
-          echo "    # Cố gắng khôi phục backup nếu có lỗi" >> patch_toolchain_script.py
-          echo "    if os.path.exists(backup_path) and not os.path.exists(toolchain_file_path):" >> patch_toolchain_script.py
-          echo "        os.rename(backup_path, toolchain_file_path)" >> patch_toolchain_script.py
-          echo "        print(f\"Restored {toolchain_file_path} from backup due to error.\")" >> patch_toolchain_script.py
-          echo "    sys.exit(1)" >> patch_toolchain_script.py
-
-          python3.9 patch_toolchain_script.py "$KIVY_IOS_TOOLCHAIN_FILE"
-          echo "Finished patching toolchain.py attempts."
-          # Kiểm tra nội dung đã patch (tùy chọn, có thể tạo nhiều output)
-          # echo "--- Patched toolchain.py (Cython variants section) ---"
-          # grep "cython_variants" "$KIVY_IOS_TOOLCHAIN_FILE"
-          # echo "----------------------------------------------------"
-
-          rm -rf ~/.kivy-ios/build/* || true
-          rm -rf ~/.kivy-ios/dist/* || true
-
-      - name: Chuẩn bị thư mục build
+      - name: Build từng bước
         script: |
           mkdir -p $CM_BUILD_DIR/iosbuild
-          cd $CM_BUILD_DIR/iosbuild
+          cd $CM_BUILD_DIR/kivy-ios
+          export MAIN_PY="$CM_BUILD_DIR/kivy_chat_app/main.py"
+          
+          echo "====== Building python3 ======"
+          python3 toolchain.py build python3 || true
+          
+          echo "====== Building kivy ======"
+          python3 toolchain.py build kivy || true
+          
+          echo "====== Creating app ======"
+          python3 toolchain.py create $APP_NAME "$MAIN_PY" || true
+          
+          echo "====== Showing build results ======"
+          ls -la
+          find . -name "*.xcodeproj" || echo "Không tìm thấy project Xcode"
 
-      - name: Build iOS dependencies
+      - name: Build IPA (nếu có project Xcode)
         script: |
-          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
-          export PATH="/usr/local/opt/gettext/bin:$PATH"
-          export PATH="/usr/local/bin:$PATH"
-          export CYTHON=$(which cython)
-          echo "Starting 'Build iOS dependencies' step with CYTHON=$CYTHON"
-          cd $CM_BUILD_DIR/iosbuild
+          cd $CM_BUILD_DIR/kivy-ios
+          # Tìm project Xcode đã tạo
+          XCODEPROJ=$(find . -name "*.xcodeproj" | head -n 1)
           
-          # PATCH: Xử lý lỗi pigz trong toolchain.py
-          echo "Patching toolchain.py for pigz graceful fallback..."
-          KIVY_IOS_TOOLCHAIN_PATH=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios/toolchain.py
-          echo "import os" > patch_pigz_issue.py
-          echo "import sys" >> patch_pigz_issue.py
-          echo "import re" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "# File gốc chúng ta cần patch" >> patch_pigz_issue.py
-          echo "file_path = sys.argv[1]" >> patch_pigz_issue.py
-          echo "backup_path = file_path + '.bak-pigz'" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "# Tạo backup" >> patch_pigz_issue.py
-          echo "if os.path.exists(backup_path):" >> patch_pigz_issue.py
-          echo "    os.remove(backup_path)" >> patch_pigz_issue.py
-          echo "os.system(f'cp {file_path} {backup_path}')" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "with open(file_path, 'r') as f:" >> patch_pigz_issue.py
-          echo "    content = f.read()" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "# Tìm dòng: self.use_pigz = sh.which('pigz')" >> patch_pigz_issue.py
-          echo "pattern = r'(\s+)self\.use_pigz = sh\.which\([\'\"]pigz[\'\"]\)'" >> patch_pigz_issue.py
-          echo "replacement = r'\\1try:\\n\\1    self.use_pigz = sh.which(\"pigz\")\\n\\1except:\\n\\1    print(\"pigz not found, using standard compression\")\\n\\1    self.use_pigz = None'" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "new_content = re.sub(pattern, replacement, content)" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "# Tìm dòng: self.use_pbzip2 = sh.which('pbzip2')" >> patch_pigz_issue.py
-          echo "pattern2 = r'(\s+)self\.use_pbzip2 = sh\.which\([\'\"]pbzip2[\'\"]\)'" >> patch_pigz_issue.py
-          echo "replacement2 = r'\\1try:\\n\\1    self.use_pbzip2 = sh.which(\"pbzip2\")\\n\\1except:\\n\\1    print(\"pbzip2 not found, using standard compression\")\\n\\1    self.use_pbzip2 = None'" >> patch_pigz_issue.py 
-          echo "" >> patch_pigz_issue.py
-          echo "new_content = re.sub(pattern2, replacement2, new_content)" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "with open(file_path, 'w') as f:" >> patch_pigz_issue.py
-          echo "    f.write(new_content)" >> patch_pigz_issue.py
-          echo "" >> patch_pigz_issue.py
-          echo "print(f'Patched {file_path} for pigz error handling')" >> patch_pigz_issue.py
-          
-          python3.9 patch_pigz_issue.py "$KIVY_IOS_TOOLCHAIN_PATH"
-          
-          export MAKEFLAGS="-j2"
-          export KIVY_IOS_JOBS=2
-          export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
-          export IPHONEOS_DEPLOYMENT_TARGET=10.0
-          export MACOSX_DEPLOYMENT_TARGET=10.15
-          export PKG_CONFIG_PATH="/usr/local/opt/openssl@1.1/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export CFLAGS="-I/usr/local/include -I/usr/local/opt/openssl@1.1/include"
-          export LDFLAGS="-L/usr/local/lib -L/usr/local/opt/openssl@1.1/lib"
-          
-          echo "🔧 SDKROOT: $SDKROOT"
-          
-          for recipe in libffi openssl; do
-            echo "📦 Building $recipe..."
-            python3.9 -m kivy_ios.toolchain build $recipe || {
-              echo "⚠️ Thử lại $recipe sau khi xóa cache..."
-              rm -rf ~/.kivy-ios/build/$recipe ~/.kivy-ios/dist/$recipe
-              python3.9 -m kivy_ios.toolchain build $recipe || echo "⚠️ Thất bại với $recipe."
-            }
-          done
-          
-          echo "📦 Building python3..."
-          export _PYTHON_HOST_PLATFORM=darwin
-          export PYTHONPATH=$(pwd)
-          export CC=$(xcrun -find -sdk iphoneos clang)
-          
-          python3.9 -m kivy_ios.toolchain build python3 || {
-            echo "⚠️ Thử lại python3 với patch đã thực hiện trước đó..."
-            rm -rf ~/.kivy-ios/build/python3 ~/.kivy-ios/dist/python3
-            # Script patch Python recipe (khác với patch toolchain cho Cython variants)
-            KIVY_IOS_ROOT_DIR=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
-            cd $KIVY_IOS_ROOT_DIR # Tạm thời chuyển dir để patch recipe python3
-            echo "Patching Python3 recipe in $KIVY_IOS_ROOT_DIR for cross-compilation..."
-            echo 'import os' > patch_python_recipe.py
-            echo 'import fileinput' >> patch_python_recipe.py
-            echo '' >> patch_python_recipe.py
-            echo 'recipe_file = "recipes/python3/__init__.py"' >> patch_python_recipe.py
-            echo 'if os.path.exists(recipe_file):' >> patch_python_recipe.py
-            echo '    print(f"Found Python3 recipe file: {os.path.abspath(recipe_file)}")' >> patch_python_recipe.py
-            echo '    print("Patching Python3 recipe...")' >> patch_python_recipe.py
-            echo '    with fileinput.FileInput(recipe_file, inplace=True) as file:' >> patch_python_recipe.py
-            echo '        for line in file:' >> patch_python_recipe.py
-            echo '            if "def get_recipe_env" in line:' >> patch_python_recipe.py
-            echo '                print(line, end="")' >> patch_python_recipe.py
-            echo '                print("        env[\\\"_PYTHON_HOST_PLATFORM\\\"] = \\\"darwin\\\"")' >> patch_python_recipe.py
-            echo '                print("        env[\\\"PYTHONPATH\\\"] = os.getcwd()")' >> patch_python_recipe.py
-            echo '            else:' >> patch_python_recipe.py
-            echo '                print(line, end="")' >> patch_python_recipe.py
-            echo '    print("Done patching Python3 recipe")' >> patch_python_recipe.py
-            echo 'else:' >> patch_python_recipe.py
-            echo '    print(f"Python3 recipe file not found at {os.path.abspath(recipe_file)}")' >> patch_python_recipe.py
-            python3.9 patch_python_recipe.py
-            cd $CM_BUILD_DIR/iosbuild # Quay lại thư mục build
-            python3.9 -m kivy_ios.toolchain build python3 || {
-              echo "❌ Lỗi Python3 nghiêm trọng."
-              exit 1
-            }
-          }
-          
-          echo "📦 Building kivy..."
-          python3.9 -m kivy_ios.toolchain build kivy || {
-            echo "⚠️ Thử lại kivy sau khi xóa cache..."
-            rm -rf ~/.kivy-ios/build/kivy ~/.kivy-ios/dist/kivy
-            python3.9 -m kivy_ios.toolchain build kivy || {
-              echo "❌ Lỗi Kivy nghiêm trọng."
-              exit 1
-            }
-          }
-          
-          if [ ! -d ~/.kivy-ios/dist/python3 ] || [ ! -d ~/.kivy-ios/dist/kivy ]; then
-            echo "❌ Thiếu dependencies Python3 hoặc Kivy."
-            exit 1
-          fi
-          echo "✅ Đã build xong dependencies chính."
-
-      - name: Tạo project từ source
-        script: |
-          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
-          export PATH="/usr/local/bin:$PATH"
-          export CYTHON=$(which cython)
-          cd $CM_BUILD_DIR/iosbuild
-          if [ -f "../kivy_chat_app/main.py" ]; then
-            python3.9 -m kivy_ios.toolchain create $APP_NAME ../kivy_chat_app/main.py
-          elif [ -f "../main.py" ]; then
-            python3.9 -m kivy_ios.toolchain create $APP_NAME ../main.py
+          if [ -n "$XCODEPROJ" ]; then
+            APP_DIR=$(dirname "$XCODEPROJ")
+            APP_NAME=$(basename "$APP_DIR" -ios)
+            
+            echo "Tìm thấy project: $XCODEPROJ, tên app: $APP_NAME"
+            cd "$APP_DIR"
+            
+            # Build ứng dụng không ký
+            xcodebuild -project "$APP_NAME.xcodeproj" -scheme "$APP_NAME" -sdk iphoneos -configuration Release clean archive -archivePath build/"$APP_NAME".xcarchive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+            
+            # Tạo IPA
+            mkdir -p build/IPA
+            cp -r build/"$APP_NAME".xcarchive/Products/Applications/"$APP_NAME".app build/IPA/
+            cd build/IPA
+            zip -r "$APP_NAME".ipa "$APP_NAME".app
+            
+            # Hiển thị kết quả
+            ls -la
+            cd ../..
+            find . -name "*.ipa"
           else
-            echo "❌ main.py not found"
-            exit 1
+            echo "Không tìm thấy project Xcode, sẽ build thư viện kivy-ios"
+            find $CM_BUILD_DIR/kivy-ios -name "*.a" || true
           fi
-          python3.9 -m kivy_ios.toolchain build $APP_NAME || {
-            echo "⚠️ Thất bại build app, thử lại..."
-            python3.9 -m kivy_ios.toolchain build $APP_NAME
-          }
-
-      - name: Chuẩn bị Xcode project
-        script: |
-          export PATH="/usr/local/opt/python@3.9/bin:/usr/local/opt/python@3.9/libexec/bin:$PATH"
-          export PATH="/usr/local/bin:$PATH"
-          export CYTHON=$(which cython)
-          cd $CM_BUILD_DIR/iosbuild
-          python3.9 -m kivy_ios.toolchain xcode $APP_NAME
-          cd $APP_NAME-ios
-          PLIST_PATH="$APP_NAME/Info.plist"
-          if [ -f "$PLIST_PATH" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST_PATH"
-          else
-            echo "⚠️ Info.plist not found at $PLIST_PATH"
-            exit 1
-          fi
-
-      - name: Build IPA
-        script: |
-          cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
-          cat > exportOptions.plist <<EOL
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>development</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-          </dict>
-          </plist>
-          EOL
-          xcodebuild -scheme $APP_NAME -configuration Release \
-                    -archivePath $APP_NAME.xcarchive archive \
-                    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive \
-                    -exportOptionsPlist exportOptions.plist \
-                    -exportPath build/Release-iphoneos \
-                    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          echo "✅ Build completed. IPA location:"
-          find build -name "*.ipa"
 
     artifacts:
-      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa 
+      - kivy-ios/*-ios/build/IPA/*.ipa
+      - kivy-ios/dist
+      - iosbuild
