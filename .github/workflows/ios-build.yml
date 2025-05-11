@@ -62,7 +62,7 @@ jobs:
           xcodebuild -scheme beluga_chat_app -configuration Release -archivePath beluga_chat_app.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: beluga-chat-ios
           path: ${{ github.workspace }}/iosbuild/beluga_chat_app-ios/build/Release-iphoneos/
