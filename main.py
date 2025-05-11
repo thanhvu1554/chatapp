@@ -14,7 +14,6 @@ from kivy.network.urlrequest import UrlRequest # QUAN TRỌNG: Để gọi API b
 from kivy.utils import get_color_from_hex, platform
 from kivy.clock import Clock
 from functools import partial
-import requests # Vẫn giữ lại để phòng trường hợp UrlRequest phức tạp, nhưng hạn chế dùng trực tiếp cho UI blocking
 import json
 import os
 import base64
@@ -208,12 +207,8 @@ class RegisterScreen(Screen):
 
         self.status_label.text = "Đang đăng ký..."
         try:
-            from Crypto.PublicKey import RSA # Cần đảm bảo pycryptodome được đóng gói
-            key = RSA.generate(2048)
-            private_key_str = key.export_key().decode()
-            public_key_str = key.publickey().export_key().decode()
-            
-            payload_dict = {'username': username, 'password': password, 'public_key': public_key_str, 'private_key': private_key_str}
+            # Không tạo key nữa, chỉ gửi username và password
+            payload_dict = {'username': username, 'password': password}
             payload = json.dumps(payload_dict)
             headers = {'Content-type': 'application/json', 'Accept': 'application/json'}
 
@@ -226,10 +221,8 @@ class RegisterScreen(Screen):
                 on_error=self.register_error,
                 timeout=10
             )
-        except ImportError:
-            self.status_label.text = "Lỗi Crypto: Cần pycryptodome."
         except Exception as e:
-            self.status_label.text = f"Lỗi tạo key: {e}"
+            self.status_label.text = f"Lỗi đăng ký: {e}"
 
     def register_success(self, request, result):
         if result.get('success'):
@@ -614,35 +607,11 @@ class ConversationScreen(Screen):
         self.friend_label.text = f"Chat với {self.friend_username}"
         self.message_input.text = "" 
         self.messages_display_layout.clear_widgets()
-        self.private_key_obj = None # Reset 
-
+        
         if not self.current_user_data or not isinstance(self.current_user_data, dict):
             print("[DEBUG] set_chat_participants: current_user_data is invalid.")
             Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI] Dữ liệu người dùng không hợp lệ.", is_system=True))
             return 
-
-        private_key_str = self.current_user_data.get('private_key')
-        print(f"[DEBUG] Attempting to load private key for {self.current_user_data.get('username')}: {'<Exists>' if private_key_str else '<MISSING_OR_NONE>'}")
-
-        if not private_key_str or not isinstance(private_key_str, str) or not private_key_str.strip():
-            print(f"[DEBUG] set_chat_participants: private_key is missing or invalid for user {self.current_user_data.get('username')}. Key data: '{private_key_str[:50] if private_key_str else private_key_str}'...")
-            Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI] Private key không dùng được. Tin nhắn đến có thể không giải mã được.", is_system=True))
-            # Sẽ không return ở đây, để on_enter vẫn gọi load_chat_history (có thể xem tin nhắn đã gửi)
-        else:
-            try:
-                from Crypto.PublicKey import RSA
-                self.private_key_obj = RSA.import_key(private_key_str.encode())
-                print(f"[DEBUG] Successfully imported private key for {self.current_user_data.get('username')}")
-            except ImportError:
-                print("[DEBUG] set_chat_participants: ImportError for Crypto.")
-                Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI] Thiếu thư viện Crypto.", is_system=True))
-            except Exception as e:
-                print(f"[DEBUG] set_chat_participants: Error importing private key: {e}. Key was: {private_key_str[:100]}...")
-                Clock.schedule_once(lambda dt: self.add_message_to_display_widget(f"[LỖI] Lỗi đọc private key: {str(e)[:50]}", is_system=True))
-        
-        # on_enter sẽ gọi load_chat_history, nên không cần gọi ở đây nữa nếu on_enter được đảm bảo gọi sau set_chat_participants.
-        # Tuy nhiên, để chắc chắn màn hình có dữ liệu ngay khi vào, có thể gọi load_chat_history() ở đây nếu on_enter chưa chạy.
-        # Hiện tại, on_enter sẽ tự gọi.
 
     def load_chat_history(self, is_periodic_refresh=False):
         if not self.current_user_data or not self.friend_username: return
@@ -712,27 +681,16 @@ class ConversationScreen(Screen):
 
     def populate_chat_history_fallback(self, is_periodic_refresh, request, result):
         current_message_widgets_texts = {child.text for child in self.messages_display_layout.children if hasattr(child, 'text')}
-        processed_messages_texts = [] # Chỉ lưu text để so sánh
-        messages_to_render = [] # Lưu dict để render
+        processed_messages_texts = []
+        messages_to_render = []
         has_new_content_fallback = False
 
         if result.get('success') and result.get('messages'):
-            from Crypto.Cipher import PKCS1_OAEP 
-            cipher_my_key = PKCS1_OAEP.new(self.private_key_obj)
-            
             for msg_data in result['messages']:
                 is_my_message = (msg_data['from'] == self.current_user_data['username'])
-                encrypted_b64 = msg_data['message']
-                display_text = ""
-                if is_my_message:
-                    display_text = "Bạn: [Tin nhắn đã gửi (fallback)]" 
-                else:
-                    try:
-                        decrypted_content = cipher_my_key.decrypt(base64.b64decode(encrypted_b64))
-                        display_text = decrypted_content.decode()
-                    except Exception as e:
-                        print("Decryption error in fallback:", e)
-                        display_text = f"{self.friend_username}: [Không giải mã được]"
+                message_content = msg_data['message']  # Không cần giải mã
+                
+                display_text = message_content
                 processed_messages_texts.append(display_text)
                 messages_to_render.append({'text': display_text, 'is_mine': is_my_message})
 
@@ -804,62 +762,40 @@ class ConversationScreen(Screen):
         if not original_message or not self.current_user_data or not self.friend_username:
             return
         
-        self.message_input.disabled = True 
-        try:
-            from Crypto.PublicKey import RSA
-            from Crypto.Cipher import PKCS1_OAEP
-        except ImportError:
-            Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI] Thiếu Crypto để gửi.", is_system=True))
-            self.message_input.disabled = False
-            return
-
-        def _on_public_key_success(request, result_pub_key):
-            if not result_pub_key.get('success') or not result_pub_key.get('public_key'):
-                Clock.schedule_once(lambda dt: self.add_message_to_display_widget(f"[LỖI] Không lấy được key của {self.friend_username}.", is_system=True))
-                self.message_input.disabled = False
-                return
-            try:
-                rec_pub_key_obj = RSA.import_key(result_pub_key['public_key'].encode())
-                cipher_encrypt = PKCS1_OAEP.new(rec_pub_key_obj)
-                enc_msg_b64 = base64.b64encode(cipher_encrypt.encrypt(original_message.encode())).decode()
-                timestamp = datetime.now().isoformat()
-
-                payload_send = {'from': self.current_user_data['username'], 'to': self.friend_username, 'message': enc_msg_b64, 'timestamp': timestamp}
-                UrlRequest(f'{API_URL}/send_message', req_body=json.dumps(payload_send), req_headers={'Content-type': 'application/json'}, 
-                           on_success=partial(_on_send_message_final_success, original_message, enc_msg_b64, timestamp), 
-                           on_failure= _on_send_message_failure_error, on_error= _on_send_message_failure_error, timeout=7)
-            except Exception as e_encrypt:
-                Clock.schedule_once(lambda dt: self.add_message_to_display_widget(f"[LỖI MÃ HÓA] {e_encrypt}", is_system=True))
-                self.message_input.disabled = False
-
-        def _on_public_key_failure_error(request, result_or_error):
-            Clock.schedule_once(lambda dt: self.add_message_to_display_widget(f"[LỖI] Lấy public key thất bại.", is_system=True))
-            self.message_input.disabled = False
+        self.message_input.disabled = True
         
-        def _on_send_message_final_success(orig_msg, enc_b64, ts, request, result_send):
-            if result_send.get('success'):
-                payload_history = {'sender': self.current_user_data['username'],'recipient': self.friend_username,
-                                   'encrypted_content': enc_b64, 'original_content': orig_msg, 'timestamp': ts}
-                UrlRequest(f'{API_URL}/store_message_history', req_body=json.dumps(payload_history), req_headers={'Content-type': 'application/json'},
-                           on_success=lambda req, res_hist: print(f"Lưu lịch sử: {res_hist.get('message')}"),
-                           on_failure=lambda req, res_hist: print(f"Lưu lịch sử thất bại: {res_hist}"), 
-                           on_error=lambda req, err_hist: print(f"Lỗi mạng lưu lịch sử: {err_hist}"), timeout=5)
-                
-                self.add_message_to_display_widget(orig_msg, is_my_message=True)
-                self.message_input.text = ""
-                Clock.schedule_once(self.scroll_to_bottom, 0.1)
-            else:
-                Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI GỬI] Server báo lỗi.", is_system=True))
-            self.message_input.disabled = False
+        # Gửi tin nhắn không mã hóa
+        timestamp = datetime.now().isoformat()
+        payload_send = {
+            'from': self.current_user_data['username'], 
+            'to': self.friend_username, 
+            'message': original_message, 
+            'timestamp': timestamp
+        }
+        
+        UrlRequest(
+            f'{API_URL}/send_message', 
+            req_body=json.dumps(payload_send), 
+            req_headers={'Content-type': 'application/json'}, 
+            on_success=partial(self._on_send_message_success, original_message, timestamp), 
+            on_failure=self._on_send_message_failure, 
+            on_error=self._on_send_message_failure, 
+            timeout=7
+        )
 
-        def _on_send_message_failure_error(request, result_or_error):
-            Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI GỬI] Không thể gửi tin nhắn.", is_system=True))
-            self.message_input.disabled = False
+    def _on_send_message_success(self, orig_msg, ts, request, result_send):
+        if result_send.get('success'):
+            # Không cần lưu lịch sử riêng nữa, tin nhắn đã được lưu khi gửi
+            self.add_message_to_display_widget(orig_msg, is_my_message=True)
+            self.message_input.text = ""
+            Clock.schedule_once(self.scroll_to_bottom, 0.1)
+        else:
+            Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI GỬI] Server báo lỗi.", is_system=True))
+        self.message_input.disabled = False
 
-        UrlRequest(f'{API_URL}/public_key/{self.friend_username}', 
-                   on_success=_on_public_key_success, 
-                   on_failure=_on_public_key_failure_error, 
-                   on_error=_on_public_key_failure_error, timeout=5)
+    def _on_send_message_failure(self, request, result_or_error):
+        Clock.schedule_once(lambda dt: self.add_message_to_display_widget("[LỖI GỬI] Không thể gửi tin nhắn.", is_system=True))
+        self.message_input.disabled = False
 
     def go_back_to_chat_screen(self, instance):
         self.manager.transition = NoTransition() 
@@ -906,8 +842,4 @@ class ChatAppKivy(App):
 
 if __name__ == '__main__':
     from kivy.core.window import Window 
-    try:
-        from Crypto.PublicKey import RSA
-    except ImportError:
-        print("CẢNH BÁO: pycryptodome KHÔNG TÌM THẤY. Cần cho mã hóa và đăng ký.")
     ChatAppKivy().run() 
