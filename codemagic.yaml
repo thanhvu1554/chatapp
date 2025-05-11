@@ -13,30 +13,32 @@ workflows:
         script: |
           brew update
           brew install python@3.9 autoconf automake libtool pkg-config gettext gawk bash git
+          # Ưu tiên PATH cho brew Python 3.9
+          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/gettext/bin:$PATH"
+          
+          echo "✅ Kiểm tra Python và pip sau khi thiết lập PATH:"
+          which python3.9 && python3.9 --version
+          which pip3.9 && pip3.9 --version
+
           brew link --overwrite automake autoconf libtool gettext
           
-          echo "✅ Kiểm tra tool:"
-          which automake && automake --version
-          which autoconf && autoconf --version
-          which libtool && libtool --version
-          which pkg-config && pkg-config --version
-          
           # Cài đặt các công cụ và biến môi trường cần thiết cho quá trình build Python
-          export PATH="/usr/local/opt/gettext/bin:$PATH"
           brew install openssl@1.1 sdl2 sdl2_image sdl2_ttf sdl2_mixer
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libssl.1.1.dylib /usr/local/lib/ || true
           ln -sf /usr/local/Cellar/openssl@1.1/*/lib/libcrypto.1.1.dylib /usr/local/lib/ || true
 
       - name: Cài kivy-ios và dependencies
         script: |
-          python3 -m pip install --upgrade pip
-          pip3 install wheel virtualenv Cython
-          pip3 install kivy-ios==$KIVY_IOS_VERSION
+          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/gettext/bin:$PATH"
+
+          python3.9 -m pip install --upgrade pip
+          pip3.9 install wheel virtualenv Cython # Cython sẽ được cài cho python3.9
+          pip3.9 install kivy-ios==$KIVY_IOS_VERSION
           
-          # Thông tin phiên bản
-          echo "Using kivy-ios version: $KIVY_IOS_VERSION"
+          echo "Using kivy-ios version: $KIVY_IOS_VERSION installed for Python 3.9"
           
-          # Xóa cache cũ nếu có để clean build
           rm -rf ~/.kivy-ios/build/* || true
           rm -rf ~/.kivy-ios/dist/* || true
 
@@ -47,9 +49,10 @@ workflows:
 
       - name: Build iOS dependencies
         script: |
+          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
+          export PATH="/usr/local/opt/gettext/bin:$PATH"
           cd $CM_BUILD_DIR/iosbuild
           
-          # Thiết lập môi trường build
           export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
           export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -59,49 +62,39 @@ workflows:
           export CFLAGS="-I/usr/local/include -I/usr/local/opt/openssl@1.1/include"
           export LDFLAGS="-L/usr/local/lib -L/usr/local/opt/openssl@1.1/lib"
           
-          echo "🔧 Thiết lập môi trường build:"
-          echo "SDKROOT: $SDKROOT"
-          echo "IPHONEOS_DEPLOYMENT_TARGET: $IPHONEOS_DEPLOYMENT_TARGET"
-          echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+          echo "🔧 SDKROOT: $SDKROOT"
           
-          # Build từng dependency theo thứ tự - phương pháp cẩn thận
           for recipe in libffi openssl; do
             echo "📦 Building $recipe..."
-            toolchain build $recipe || {
+            python3.9 -m kivy_ios.toolchain build $recipe || {
               echo "⚠️ Thử lại $recipe sau khi xóa cache..."
-              rm -rf ~/.kivy-ios/build/$recipe
-              rm -rf ~/.kivy-ios/dist/$recipe
-              toolchain build $recipe || echo "⚠️ Thất bại với $recipe, tiếp tục xử lý..."
+              rm -rf ~/.kivy-ios/build/$recipe ~/.kivy-ios/dist/$recipe
+              python3.9 -m kivy_ios.toolchain build $recipe || echo "⚠️ Thất bại với $recipe."
             }
           done
           
-          # PYTHON BUILD - Đoạn quan trọng nhất
-          echo "📦 Building python3 với CFLAGS/LDFLAGS đặc biệt..."
+          echo "📦 Building python3..."
           export _PYTHON_HOST_PLATFORM=darwin
           export PYTHONPATH=$(pwd)
           export CC=$(xcrun -find -sdk iphoneos clang)
           
-          # Build python3 với tùy chọn đặc biệt
-          toolchain build python3 || {
-            echo "⚠️ Thử lại python3 với phương pháp đặc biệt..."
-            rm -rf ~/.kivy-ios/build/python3
-            rm -rf ~/.kivy-ios/dist/python3
+          python3.9 -m kivy_ios.toolchain build python3 || {
+            echo "⚠️ Thử lại python3 với patch..."
+            rm -rf ~/.kivy-ios/build/python3 ~/.kivy-ios/dist/python3
             
-            # Thử phương pháp thứ 2 - sửa trực tiếp source code
-            KIVY_IOS_ROOT=$(pip3 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
-            cd $KIVY_IOS_ROOT
-            echo "Patching Python3 recipe..."
+            KIVY_IOS_ROOT_DIR=$(pip3.9 show kivy-ios | grep Location | cut -d ' ' -f 2)/kivy_ios
+            cd $KIVY_IOS_ROOT_DIR
+            echo "Patching Python3 recipe in $KIVY_IOS_ROOT_DIR..."
             
-            # Tạo file patch_python.py bằng lệnh echo
             echo 'import os' > patch_python.py
             echo 'import fileinput' >> patch_python.py
             echo '' >> patch_python.py
             echo 'recipe_file = "recipes/python3/__init__.py"' >> patch_python.py
             echo 'if os.path.exists(recipe_file):' >> patch_python.py
+            echo '    print(f"Found recipe file: {os.path.abspath(recipe_file)}")' >> patch_python.py
             echo '    print("Patching Python3 recipe...")' >> patch_python.py
             echo '    with fileinput.FileInput(recipe_file, inplace=True) as file:' >> patch_python.py
             echo '        for line in file:' >> patch_python.py
-            echo '            # Sửa các lỗi tương thích' >> patch_python.py
             echo '            if "def get_recipe_env" in line:' >> patch_python.py
             echo '                print(line, end="")' >> patch_python.py
             echo '                print("        env[\\\"_PYTHON_HOST_PLATFORM\\\"] = \\\"darwin\\\"")' >> patch_python.py
@@ -110,87 +103,67 @@ workflows:
             echo '                print(line, end="")' >> patch_python.py
             echo '    print("Done patching Python3 recipe")' >> patch_python.py
             echo 'else:' >> patch_python.py
-            echo '    print("Python3 recipe file not found")' >> patch_python.py
+            echo '    print(f"Python3 recipe file not found at {os.path.abspath(recipe_file)}")' >> patch_python.py
 
-            python3 patch_python.py
+            python3.9 patch_python.py
             
-            # Build python3 sau khi patch
             cd $CM_BUILD_DIR/iosbuild
-            toolchain build python3 || {
-              echo "❌ Lỗi Python3 - Sử dụng kivy-ios phiên bản cũ hơn hoặc sử dụng image có cấu hình khác"
+            python3.9 -m kivy_ios.toolchain build python3 || {
+              echo "❌ Lỗi Python3 nghiêm trọng."
               exit 1
             }
           }
           
-          # Build kivy
           echo "📦 Building kivy..."
-          toolchain build kivy || {
+          python3.9 -m kivy_ios.toolchain build kivy || {
             echo "⚠️ Thử lại kivy sau khi xóa cache..."
-            rm -rf ~/.kivy-ios/build/kivy
-            rm -rf ~/.kivy-ios/dist/kivy
-            toolchain build kivy || {
-              echo "❌ Lỗi Kivy - Không thể tiếp tục"
+            rm -rf ~/.kivy-ios/build/kivy ~/.kivy-ios/dist/kivy
+            python3.9 -m kivy_ios.toolchain build kivy || {
+              echo "❌ Lỗi Kivy nghiêm trọng."
               exit 1
             }
           }
           
-          # Kiểm tra xem đã build đủ dependencies chưa
-          if [ ! -d ~/.kivy-ios/dist/python3 ]; then
-            echo "❌ Thiếu Python3, không thể tiếp tục"
+          if [ ! -d ~/.kivy-ios/dist/python3 ] || [ ! -d ~/.kivy-ios/dist/kivy ]; then
+            echo "❌ Thiếu dependencies Python3 hoặc Kivy."
             exit 1
           fi
-          
-          if [ ! -d ~/.kivy-ios/dist/kivy ]; then
-            echo "❌ Thiếu Kivy, không thể tiếp tục"
-            exit 1
-          fi
-          
-          echo "✅ Đã build xong dependencies chính"
+          echo "✅ Đã build xong dependencies chính."
 
       - name: Tạo project từ source
         script: |
+          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
           cd $CM_BUILD_DIR/iosbuild
-          
-          # Kiểm tra file main.py
           if [ -f "../kivy_chat_app/main.py" ]; then
-            echo "✅ Using main.py from kivy_chat_app"
-            toolchain create $APP_NAME ../kivy_chat_app/main.py
+            python3.9 -m kivy_ios.toolchain create $APP_NAME ../kivy_chat_app/main.py
           elif [ -f "../main.py" ]; then
-            echo "✅ Using main.py from root"
-            toolchain create $APP_NAME ../main.py
+            python3.9 -m kivy_ios.toolchain create $APP_NAME ../main.py
           else
             echo "❌ main.py not found"
-            find .. -name "main.py"
             exit 1
           fi
-          
-          # Build app
-          echo "⏳ Building app..."
-          toolchain build $APP_NAME || {
-            echo "⚠️ Thất bại với build app, thử lại không clean..."
-            toolchain build $APP_NAME
+          python3.9 -m kivy_ios.toolchain build $APP_NAME || {
+            echo "⚠️ Thất bại build app, thử lại..."
+            python3.9 -m kivy_ios.toolchain build $APP_NAME
           }
 
       - name: Chuẩn bị Xcode project
         script: |
+          export PATH="/usr/local/opt/python@3.9/bin:$PATH"
           cd $CM_BUILD_DIR/iosbuild
-          toolchain xcode $APP_NAME
+          python3.9 -m kivy_ios.toolchain xcode $APP_NAME
           cd $APP_NAME-ios
-          
           PLIST_PATH="$APP_NAME/Info.plist"
           if [ -f "$PLIST_PATH" ]; then
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST_PATH"
-            echo "✅ Updated Bundle ID"
           else
             echo "⚠️ Info.plist not found at $PLIST_PATH"
-            find . -name "Info.plist"
             exit 1
           fi
 
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
-          
           cat > exportOptions.plist <<EOL
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -203,20 +176,15 @@ workflows:
           </dict>
           </plist>
           EOL
-          
-          # Build và archive không ký
           xcodebuild -scheme $APP_NAME -configuration Release \
                     -archivePath $APP_NAME.xcarchive archive \
                     CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-                    
-          # Export IPA
           xcodebuild -exportArchive -archivePath $APP_NAME.xcarchive \
                     -exportOptionsPlist exportOptions.plist \
                     -exportPath build/Release-iphoneos \
                     CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-          
           echo "✅ Build completed. IPA location:"
           find build -name "*.ipa"
 
     artifacts:
-      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa
+      - iosbuild/$APP_NAME-ios/build/Release-iphoneos/*.ipa 
