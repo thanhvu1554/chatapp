@@ -8,57 +8,52 @@ workflows:
         BUNDLE_ID: "com.beluga.chatt"
 
     scripts:
-      - name: Cài công cụ build & automake
+      - name: Cài toàn bộ công cụ build cần thiết (FULL FIX)
         script: |
           brew update
-          brew install automake libtool pkg-config
-          echo "✅ Kiểm tra automake:"
-          automake --version || { echo "❌ Automake không cài được!"; exit 1; }
 
-      - name: Cài Python và pip
-        script: |
-          brew install python
-          pip3 install --upgrade pip
-          pip3 install virtualenv
+          # Cài đầy đủ các tool cần thiết cho python3, libffi, openssl, v.v.
+          brew install python \
+                       autoconf automake libtool pkg-config \
+                       gettext gawk bash git
+
+          # Đảm bảo chúng được link đúng
+          brew link --overwrite automake
+          brew link --overwrite libtool
+          brew link --overwrite autoconf
+          brew link --overwrite gettext
+
+          # Kiểm tra lại PATH và tool đã sẵn sàng
+          echo "✅ Kiểm tra tool:"
+          which automake && automake --version
+          which autoconf && autoconf --version
+          which libtool  && libtool --version
+          which pkg-config && pkg-config --version
 
       - name: Cài kivy-ios
         script: |
+          pip3 install --upgrade pip
+          pip3 install virtualenv
           pip3 install kivy-ios
 
-      - name: Build dependencies với debug chi tiết
+      - name: Tạo thư mục build
         script: |
-          cd $CM_BUILD_DIR
-          mkdir -p iosbuild
-          cd iosbuild
+          mkdir -p $CM_BUILD_DIR/iosbuild
+          cd $CM_BUILD_DIR/iosbuild
 
-          echo "🌐 Tải trước openssl để tránh lỗi mạng"
-          mkdir -p .cache
-          curl -L -o .cache/hostopenssl-openssl-1.1.1w.tar.gz https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+      - name: Build các dependencies (python3, kivy)
+        script: |
+          cd $CM_BUILD_DIR/iosbuild
 
-          echo "🔧 Giới hạn số job về 2 để giảm RAM"
+          # Hạn chế RAM sử dụng để tránh OOM
+          export MAKEFLAGS="-j2"
           export KIVY_IOS_JOBS=2
-
-          echo "📦 Build hostopenssl..."
-          toolchain build hostopenssl || { echo "❌ Build hostopenssl failed"; exit 1; }
 
           echo "📦 Build libffi..."
           toolchain build libffi || { echo "❌ Build libffi failed"; exit 1; }
 
-          echo "📦 Build openssl..."
-          toolchain build openssl || { echo "❌ Build openssl failed"; exit 1; }
-
-          echo "📦 Build hostpython3..."
-          toolchain build hostpython3 || { echo "❌ Build hostpython3 failed"; exit 1; }
-
           echo "📦 Build python3..."
-          toolchain build python3 || { 
-            echo "❌ Build python3 failed"; 
-            echo "📁 Kiểm tra thư mục .cache:"
-            ls -lhR .cache
-            echo "📁 Kiểm tra dung lượng ổ đĩa:"
-            df -h
-            exit 1; 
-          }
+          toolchain build python3 || { echo "❌ Build python3 failed"; exit 1; }
 
           echo "📦 Build kivy..."
           toolchain build kivy || { echo "❌ Build kivy failed"; exit 1; }
@@ -66,6 +61,7 @@ workflows:
       - name: Tạo project từ main.py
         script: |
           cd $CM_BUILD_DIR/iosbuild
+
           echo "📁 Kiểm tra workspace:"
           ls -la ../
 
@@ -80,33 +76,33 @@ workflows:
             exit 1
           fi
 
+          toolchain build $APP_NAME
+
       - name: Tạo Xcode project & sửa Bundle ID
         script: |
           cd $CM_BUILD_DIR/iosbuild
           toolchain xcode $APP_NAME
-          cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
+          cd $APP_NAME-ios
 
           echo "📁 Kiểm tra cấu trúc thư mục:"
           ls -la
           echo "📁 Bên trong thư mục app:"
           ls -la $APP_NAME/
 
-          if [ -f "$APP_NAME/Info.plist" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_NAME/Info.plist"
-            echo "✅ Bundle ID đã được sửa"
-          elif [ -f "$APP_NAME/$APP_NAME-Info.plist" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_NAME/$APP_NAME-Info.plist"
-            echo "✅ Bundle ID đã được sửa (file -Info.plist)"
+          PLIST_PATH="$APP_NAME/Info.plist"
+          if [ -f "$PLIST_PATH" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST_PATH"
+            echo "✅ Đã sửa Bundle ID trong Info.plist"
           else
             echo "⚠️ Không tìm thấy Info.plist"
-            find . -name "Info.plist" -o -name "*-Info.plist"
+            find . -name "Info.plist"
           fi
 
       - name: Build IPA unsigned
         script: |
           cd $CM_BUILD_DIR/iosbuild/$APP_NAME-ios
 
-          echo "📦 Bắt đầu build archive"
+          echo "📦 Build archive..."
           xcodebuild -scheme $APP_NAME -configuration Release -archivePath $APP_NAME.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
           echo "📦 Tạo exportOptions.plist"
